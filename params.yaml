@@ -1,0 +1,23 @@
+embeddingDim: 14152
+labelsDim: 1191
+latentDim: 512
+
+preprocessing:
+  rawDataPath: data/raw/RawPChEMBL.csv
+  outDataFolder: data/processed/
+
+training:
+  metricsOutPath: metrics/
+  processedData: data/processed/
+  outModelFolder: models/train/
+  epochs: 100
+
+testing:
+  vocabPath: data/processed/smiVocab.json
+  modelPath: models/train/checkpoint39epoch96.pt
+  metricsOutPath: metrics/
+
+generation:
+  vocabPath: data/processed/smiVocab.json
+  modelPath: models/train/checkpoint39epoch96.pt
+  resultPath: data/result/
