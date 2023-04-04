@@ -51,9 +51,7 @@ if __name__ == '__main__':
     labelsDim = params['labelsDim']
     latentDim = params['latentDim']
     
-    vocabPath = params['demo']['vocabPath']
     modelPath = params['demo']['modelPath']
-    metricsOutPath = params['demo']['metricsOutPath']
     
     model = CVAE(embeddingDim, labelsDim, latentDim).to(device)
     model.load_state_dict(torch.load(modelPath))
