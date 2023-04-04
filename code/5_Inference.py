@@ -5,6 +5,10 @@ from tqdm import tqdm
 import numpy as np
 from rdkit import Chem, DataStructs
 
+import matplotlib.pyplot as plt
+
+from sklearn.decomposition import PCA
+
 import json
 import dvc.api
 import os
@@ -20,6 +24,7 @@ def inference(model):
         embeddings = np.array([idTo1Hot(i, 58) for i in list(data[0])])
         embeddings = torch.Tensor(embeddings)
         embeddings = embeddings.to(device)
+        embeddings = embeddings.view(-1)
         
         sequence = data[1]
         sequence = torch.Tensor(sequence)
@@ -38,7 +43,11 @@ def inference(model):
         
         z = zMean + eps*std
         
-        print(z)
+        plt.scatter(z.tolist(), range(len(z.tolist())))
+        
+    plt.savefig('scatterResults.png')
+        
+        
 
 
 
