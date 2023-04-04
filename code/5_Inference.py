@@ -43,9 +43,8 @@ def inference(model):
         
         z = zMean + eps*std
         
-        plt.scatter(z.tolist(), range(len(z.tolist())))
-        
-    plt.savefig('scatterResults.png')
+        plt.scatter(z.tolist(), z.tolist()[::-1])
+        plt.savefig('scatterResults.png')
         
         
 
