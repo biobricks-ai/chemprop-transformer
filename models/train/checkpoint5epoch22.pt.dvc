@@ -1,0 +1,4 @@
+outs:
+- md5: bb82a6990cc44d2bf31c5e9080cbfe81
+  size: 1330406091
+  path: checkpoint5epoch22.pt

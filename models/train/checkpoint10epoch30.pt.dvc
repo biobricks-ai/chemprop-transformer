@@ -1,0 +1,4 @@
+outs:
+- md5: bf682158d19f2c78cd6c7cd778435d5a
+  size: 1330406111
+  path: checkpoint10epoch30.pt

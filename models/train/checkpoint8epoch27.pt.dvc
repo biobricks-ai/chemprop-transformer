@@ -1,0 +1,4 @@
+outs:
+- md5: bd9c2658ae851ebe993215fe7bb9b6a4
+  size: 1330406091
+  path: checkpoint8epoch27.pt

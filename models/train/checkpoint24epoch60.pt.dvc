@@ -1,0 +1,4 @@
+outs:
+- md5: 79ca0b01e2a3fb222973a8fa926d4baa
+  size: 1330406111
+  path: checkpoint24epoch60.pt

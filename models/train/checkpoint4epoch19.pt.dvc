@@ -1,0 +1,4 @@
+outs:
+- md5: 61ba8dfafa9cec5fb8fefa9ac4f015c1
+  size: 1330406091
+  path: checkpoint4epoch19.pt

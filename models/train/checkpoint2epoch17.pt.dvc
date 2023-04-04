@@ -1,0 +1,4 @@
+outs:
+- md5: 8b0d6f480abce83da5984b708536fad8
+  size: 1330406091
+  path: checkpoint2epoch17.pt
