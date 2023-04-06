@@ -8,28 +8,29 @@ import torch.nn.functional as F
 import torch.utils.data
 
 class Encoder(nn.Module):
-    def __init__(self, embeddingDim, labelsDim, latentDim):
+    def __init__(self, embeddingSize, labelsSize, latentSize):
         super(Encoder, self).__init__()
-        self.embeddingDim = embeddingDim
-        self.labelsDim = labelsDim
-        self.latentDim = latentDim
+        self.embeddingSize = embeddingSize
+        self.labelsSize = labelsSize
+        self.latentSize = latentSize
         
         self.kernelSize = 9
         self.strideSize = 2
-
+        
+        zSize = embeddingSize + labelsSize
+        
+        for _ in range(3): # for num of conv layers
+            zSize = ((zSize - self.kernelSize)//self.strideSize) + 1
+            
         self.relu = nn.ReLU()
         self.conv0 = nn.Conv1d(1, 16, kernel_size = self.kernelSize, stride = self.strideSize)
         self.conv1 = nn.Conv1d(16, 16, kernel_size = self.kernelSize, stride = self.strideSize)
         self.conv2 = nn.Conv1d(16, 1, kernel_size = self.kernelSize, stride = self.strideSize)
         
-        zSize = embeddingDim + labelsDim
+        self.zMean = nn.Linear(zSize, latentSize)
+        self.zLogVar = nn.Linear(zSize, latentSize)
         
-        for _ in range(3): # for num of conv layers
-            zSize = ((zSize - self.kernelSize)//self.strideSize) + 1
         
-        self.zMean = nn.Linear(zSize, latentDim)
-        self.zLogVar = nn.Linear(zSize, latentDim)
-
     def forward(self, smiEmbedding, labelsEmbedding):
         catEmbeddings = torch.cat((smiEmbedding, labelsEmbedding), dim=0)
         catEmbeddings = catEmbeddings.view(1, 1, catEmbeddings.size(0))
@@ -42,57 +43,69 @@ class Encoder(nn.Module):
         z = z.view(-1)
         
         mean = self.zMean(z)
-        mean = F.softmax(mean, 0)
+        # mean = F.softmax(mean, 0)
         logVar = self.zLogVar(z)
-        logVar = F.softmax(logVar, 0)
+        # logVar = F.softmax(logVar, 0)
         return mean, logVar
+
     
 class Decoder(nn.Module):
-    def __init__(self, embeddingDim, labelsDim, latentDim):
+    def __init__(self, encodeSize, labelsSize, outputSize, nGru = 3, hiddenSize = 4096):
         super(Decoder, self).__init__()
-        self.embeddingDim = embeddingDim
-        self.labelsDim = labelsDim
-        self.latentDim = latentDim
-
-        self.relu = nn.ReLU()
-        self.dropout = nn.Dropout(p=0.2)
         
-        self.gru1 = nn.GRU(latentDim + labelsDim, 4096, 3, batch_first = True)
+        self.encodeSize = encodeSize
+        self.labelsSize = labelsSize
+        self.outputSize = outputSize
+        self.hiddenSize = hiddenSize
+        self.nGru = nGru
+        
+        self.gruInputSize = self.encodeSize + self.labelsSize
+        
+        self.dropout = nn.Dropout(p=0.2)
+        self.relu = nn.ReLU()
         self.norm1 = nn.BatchNorm1d(1)
-        self.l2 = nn.Linear(4096, embeddingDim)
+        
+        self.gru = nn.GRU(self.gruInputSize, self.hiddenSize, self.nGru, batch_first = True)
+        self.l2 = nn.Linear(self.hiddenSize, self.outputSize)
 
-    def forward(self, encodedEmbedding, labelsEmbedding):
-        catEmbeddings = torch.cat((encodedEmbedding, labelsEmbedding), dim=0)
+    def forward(self, encodedInput, labels):
+        catEmbeddings = torch.cat((encodedInput, labels), dim=0)
         catEmbeddings = catEmbeddings.view(1, 1, catEmbeddings.size(0))
-        yPred, yHidden = self.gru1(catEmbeddings)
+        yPred, yHidden = self.gru(catEmbeddings)
         yPred = self.norm1(yPred)
         yPred = self.dropout(yPred)
         yPred =  self.l2(yPred)
         yPred = self.relu(yPred)
         return yPred
-    
+  
+  
 class CVAE(nn.Module):
-    #244 12 64
-    def __init__(self, embeddingDim, labelsDim, latentDim):
+    def __init__(self, embeddingSize, vocabSize, labelsSize, latentSize):
         super(CVAE, self).__init__()
-        self.embeddingDim = embeddingDim
-        self.labelsDim = labelsDim
-        self.latentDim = latentDim
-
-        self.encoder = Encoder(embeddingDim, labelsDim, latentDim)
+        
+        self.embeddingSize = embeddingSize
+        self.vocabSize = vocabSize
+        self.labelsSize = labelsSize
+        self.latentSize = latentSize
+        
+        self.oneHotEmbeddingSize = embeddingSize * vocabSize
+        
         self.dropout = nn.Dropout(p=0.1)
-        self.decoder = Decoder(embeddingDim, labelsDim, latentDim)
-
+        
+        self.encoder = Encoder(self.oneHotEmbeddingSize, self.labelsSize, self.latentSize)
+        self.decoder = Decoder(self.latentSize, self.labelsSize, self.oneHotEmbeddingSize)
+        
     def reparametrize(self, mean, logvar):
         std = torch.exp(0.5*logvar)
         eps = torch.randn_like(std)
         return mean + eps*std
-
+        
+        
     def forward(self, embedding, labels):
         embedding = embedding.view(-1)
         zMean, zLogvar = self.encoder(embedding, labels)
         z = self.reparametrize(zMean, zLogvar)
         z = self.dropout(z)
         yPred = self.decoder(z, labels)
-        yPred = yPred.view(244, 58)
+        yPred = yPred.view(self.embeddingSize, self.vocabSize)
         return yPred, zMean, zLogvar
