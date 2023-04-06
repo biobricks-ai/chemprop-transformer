@@ -1,6 +1,11 @@
-embeddingDim: 14152
-labelsDim: 1191
 latentDim: 512
 
-demo:
-  modelPath: models/train/checkpoint39epoch96.pt
+preprocessing:
+  rawDataPath: data/raw/RawChemHarmony.csv
+  outDataFolder: data/processed/
+
+training:
+  metricsOutPath: metrics/
+  processedData: data/processed/
+  outModelFolder: models/train/
+  epochs: 100
