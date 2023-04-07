@@ -13,7 +13,7 @@ import torch.utils.data
 from tqdm import tqdm
 
 from CVAE.model import CVAE
-from utils import loadTrain, loadValid, idTo1Hot
+from utils import loadTrainData, prepareInputs
 from torch.optim.lr_scheduler import ExponentialLR
 
 torch.set_default_tensor_type(torch.FloatTensor)
@@ -27,73 +27,62 @@ def handle_interrupt(signal_number, frame):
     
 signal.signal(signal.SIGINT, handle_interrupt)
 
-def loadTrainData(folderPath):
-    print('loading training data...')
-    trainTensors = loadTrain(folderPath)
-    print('loading validation data...')
-    validTensors = loadValid(folderPath)
-    print('done!')
-    
-    return trainTensors, validTensors
-
 def cvaeLoss(x, xHat, mu, logvar):
     RECON = F.cross_entropy(xHat, x)
     KLD = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
-    return RECON + KLD
-
-def prepareInputs(data, vocabSize):
-    embedding = np.array([idTo1Hot(i, vocabSize) for i in list(data[0])])
-    embedding = torch.Tensor(embedding)
-    embedding = embedding.to(device)
-
-    assay = data[1]
-    assay = torch.Tensor(assay)
-    assay = assay.to(device)
-    
-    value = data[2]
-    value = torch.Tensor(value)
-    value = value.to(device)
-    
-    labels = torch.cat((assay, value), dim=0)
-    
-    return embedding, labels
-
+    return RECON + KLD, RECON.item(), KLD.item()
 
 def evaluate(model, validTensors):
     model.eval()
     evalLoss = []
+    reconLoss = []
+    kldLoss = []
     for data in tqdm(validTensors):
         
-        embedding, labels = prepareInputs(data, model.vocabSize)
+        embedding, labels = prepareInputs(data, model.vocabSize, device)
         
         with torch.no_grad():
             xHat, z_mean, z_logvar = model(embedding, labels)
-            loss = cvaeLoss(embedding, xHat, z_mean, z_logvar)
+            loss, recon, kld = cvaeLoss(embedding, xHat, z_mean, z_logvar)
             evalLoss.append(loss.item())
+            reconLoss.append(recon)
+            kldLoss.append(kld)
             
         if signal_received:
             print('Stopping actual validation step...')
             break
-        
-    return sum(evalLoss) / len(evalLoss)
+    
+    evalLoss = sum(evalLoss) / len(evalLoss)
+    reconLoss = sum(reconLoss) / len(reconLoss)
+    kldLoss = sum(kldLoss) / len(kldLoss)    
+    
+    return evalLoss, reconLoss, kldLoss
     
 
 def train(model, optimizer, scheduler, folderPath, otuputFolder, epochs=5):
     trainTensors, validTensors = loadTrainData(folderPath)
+    
+    trainTensors = trainTensors[:1000]
+    validTensors = validTensors[:1000]
     
     checkpointId = 0
     bestTrainLoss = np.inf
     bestEvalLoss = np.inf
     
     for epoch in range(epochs):
-        print('{}/{}'.format(epoch, epochs))
+        model.train()
+        print('{}/{}'.format(epoch+1, epochs))
         epochLoss = []
+        reconLoss = []
+        kldLoss = []
         for data in tqdm(trainTensors):
-            embedding, labels = prepareInputs(data, model.vocabSize)
+            embedding, labels = prepareInputs(data, model.vocabSize, device)
             
             xHat, z_mean, z_logvar = model(embedding, labels)
-            loss = cvaeLoss(embedding, xHat, z_mean, z_logvar)
+            loss, recon, kld = cvaeLoss(embedding, xHat, z_mean, z_logvar)
             epochLoss.append(loss.item())
+            reconLoss.append(recon)
+            kldLoss.append(kld)
             
             loss.backward()
             optimizer.step()
@@ -105,10 +94,19 @@ def train(model, optimizer, scheduler, folderPath, otuputFolder, epochs=5):
         scheduler.step()
         
         epochLoss = sum(epochLoss)/len(epochLoss)
-        evalLoss = evaluate(model, validTensors)
+        reconLoss = sum(reconLoss)/len(reconLoss)
+        kldLoss = sum(kldLoss)/len(kldLoss)
+        
+        evalLoss, evalReconLoss, evalKldLoss = evaluate(model, validTensors)
         
         with open('{}loss.tsv'.format(metricsOutPath), 'a+') as f:
-            f.write('{}\t{}\t{}\n'.format(epoch, epochLoss, 0))###########
+            f.write('{}\t{}\t{}\n'.format(epoch, epochLoss, evalLoss))
+        
+        with open('{}recon.tsv'.format(metricsOutPath), 'a+') as f:
+            f.write('{}\t{}\t{}\n'.format(epoch, reconLoss, evalReconLoss))
+            
+        with open('{}kld.tsv'.format(metricsOutPath), 'a+') as f:
+            f.write('{}\t{}\t{}\n'.format(epoch, kldLoss, evalKldLoss))
             
         if epochLoss < bestTrainLoss and evalLoss < bestEvalLoss:
             bestTrainLoss = epochLoss
@@ -125,7 +123,6 @@ def train(model, optimizer, scheduler, folderPath, otuputFolder, epochs=5):
     
     
 
-
 if __name__ == '__main__':
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     params = dvc.api.params_show()
@@ -141,6 +138,12 @@ if __name__ == '__main__':
     os.makedirs(metricsOutPath, exist_ok=True)
     
     with open('{}loss.tsv'.format(metricsOutPath), 'w') as f:
+        f.write('step\ttLoss\teLoss\n')
+        
+    with open('{}recon.tsv'.format(metricsOutPath), 'w') as f:
+        f.write('step\ttLoss\teLoss\n')
+        
+    with open('{}kld.tsv'.format(metricsOutPath), 'w') as f:
         f.write('step\ttLoss\teLoss\n')
     
     with open('{}/modelInfo.json'.format(processedDataPath)) as f:

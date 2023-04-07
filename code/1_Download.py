@@ -1,5 +1,7 @@
 import biobricks as bb
 import numpy as np
+import dvc.api
+import os
 
 bb.install('chemharmony')
 chemharmony = bb.load('chemharmony')
@@ -11,4 +13,9 @@ activities = activities.replace(['positive', 'Positive', 'Active', 'active antag
 activities = activities.replace(['quartile_1', 'quartile_2', 'quartile_3', 'quartile_4',], 1)
 activities = activities[ activities['smiles'].str.len() <= 244]
 activities.columns = ['smiles','assay','value']
-activities.to_csv('data/raw/RawChemHarmony.csv')
+
+params = dvc.api.params_show()
+outFolder = params['download']['outFolder']
+os.makedirs(outFolder, exist_ok=True)
+
+activities.to_csv('{}RawChemHarmony.csv'.format(outFolder))

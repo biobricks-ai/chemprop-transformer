@@ -1,6 +1,6 @@
 import torch
 from CVAE.model import CVAE
-from utils import loadTest, idTo1Hot, embeddingAccuracy
+from utils import loadTest, idTo1Hot, prepareInputs
 from tqdm import tqdm
 import numpy as np
 from rdkit import Chem, DataStructs
@@ -14,29 +14,20 @@ import dvc.api
 import os
 
 
-def inference(model):
+def inference(model, processedData):
+    vocabSize = model.vocabSize
+    
     model = model.encoder
     model.eval()
     
-    testTensors = loadTest('data/processed/')
+    testTensors = loadTest(processedData)
+    testTensors = testTensors[:1000]
     
     for data in tqdm(testTensors):
-        embeddings = np.array([idTo1Hot(i, 58) for i in list(data[0])])
-        embeddings = torch.Tensor(embeddings)
-        embeddings = embeddings.to(device)
-        embeddings = embeddings.view(-1)
+        embedding, labels = prepareInputs(data, vocabSize, device)
+        embedding = embedding.view(-1)
         
-        sequence = data[1]
-        sequence = torch.Tensor(sequence)
-        sequence = sequence.to(device)
-        
-        interaction = data[2]
-        interaction = torch.Tensor(interaction)
-        interaction = interaction.to(device)
-        
-        labels = torch.cat((sequence, interaction), dim=0)
-        
-        zMean, zLogvar = model(embeddings, labels)
+        zMean, zLogvar = model(embedding, labels)
         
         std = torch.exp(0.5*zLogvar)
         eps = torch.randn_like(std)
@@ -44,24 +35,35 @@ def inference(model):
         z = zMean + eps*std
         
         plt.scatter(z.tolist(), z.tolist()[::-1])
-        plt.savefig('scatterResults.png')
         
+    plt.savefig('{}reconVisualization.png'.format(metricsOutPath))
         
-
-
 
 if __name__ == '__main__':
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     
     params = dvc.api.params_show()
     
-    embeddingDim = params['embeddingDim']
-    labelsDim = params['labelsDim']
     latentDim = params['latentDim']
     
-    modelPath = params['demo']['modelPath']
+    modelFolder = params['inference']['modelFolder']
+    processedData = params['inference']['processedData']
+    metricsOutPath = params['inference']['metricsOutPath']
     
-    model = CVAE(embeddingDim, labelsDim, latentDim).to(device)
-    model.load_state_dict(torch.load(modelPath))
+    os.makedirs(metricsOutPath, exist_ok=True)
     
-    inference(model)
+    with open('{}/modelInfo.json'.format(processedData)) as f:
+        modelInfo = json.load(f)
+    
+    embeddingSize = modelInfo['embeddingSize']
+    vocabSize = modelInfo['vocabSize']
+    assaySize = modelInfo['assaySize']
+    
+    labelsSize = assaySize + 1
+    
+    model = CVAE(embeddingSize, vocabSize, labelsSize, latentDim)
+    model = model.to(device)
+    
+    model.load_state_dict(torch.load('{}bestModel.pt'.format(modelFolder)))
+    
+    inference(model, processedData)

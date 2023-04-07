@@ -23,7 +23,6 @@ def toEmbedding(dataIn, charToInt, maxLength):
     dataIn = dataIn.ljust(maxLength)
     dataIn = list(dataIn)
     embedding = [charToInt[c] for c in dataIn]
-    # embedding = [idTo1Hot(embed, 58) for embed in embedding]
     return np.array(embedding)
 
 def embeddingAccuracy(x, xHat):
@@ -33,39 +32,42 @@ def embeddingAccuracy(x, xHat):
             correct += 1  
     return (correct/len(x))*100
 
-# def idxToEmbed(id):
-#     embedding = bin(id).replace('0b','')
-#     embedding = [int(iEmbed) for iEmbed in embedding]
-#     embedding = [0]*(11-len(embedding)) + embedding
-#     embedding = np.array(embedding)
-#     return embedding
-
 def loadTrain(folderPath):
-    print('loading training set')
+    print('loading training set...')
     trainTensors = np.load('{}train.npy'.format(folderPath), allow_pickle=True)
     return trainTensors
 
 def loadTest(folderPath):
-    print('loading testing set')
+    print('loading testing set...')
     testTensors = np.load('{}test.npy'.format(folderPath), allow_pickle=True)
     return testTensors
 
 def loadValid(folderPath):
-    print('loading validation set')
+    print('loading validation set...')
     validTensors = np.load('{}valid.npy'.format(folderPath), allow_pickle=True)
     return validTensors
 
-def loadDataset(folderPath):
-    trainTensors = np.load('{}train.npy'.format(folderPath), allow_pickle=True)
-    testTensors = np.load('{}test.npy'.format(folderPath), allow_pickle=True)
-    validTensors = np.load('{}valid.npy'.format(folderPath), allow_pickle=True)
-    return trainTensors, testTensors, validTensors
+def loadTrainData(folderPath):
+    trainTensors = loadTrain(folderPath)
+    validTensors = loadValid(folderPath)
+    print('done!')
+    
+    return trainTensors, validTensors
 
-def stochasticToSmiles(matrix, vocab):
-    tokenizedEmbedd = []
-    for proBvect in matrix:
-        proBvect = proBvect.tolist()
-        token = np.random.choice(len(vocab), 1, proBvect)
-        tokenizedEmbedd.append(token)
-        
-    return tokenizedEmbedd
+def prepareInputs(data, vocabSize, device):
+    embedding = np.array([idTo1Hot(i, vocabSize) for i in list(data[0])])
+    embedding = torch.Tensor(embedding)
+    embedding = embedding.to(device)
+
+    assay = data[1]
+    assay = torch.Tensor(assay)
+    assay = assay.to(device)
+    
+    value = data[2]
+    value = torch.Tensor(value)
+    value = value.to(device)
+    
+    labels = torch.cat((assay, value), dim=0)
+    
+    return embedding, labels
+

@@ -10,12 +10,13 @@ tqdm.pandas()
 
 import dvc.api
 from utils import generateCharSet, toEmbedding, idTo1Hot
-
+import os
 
 params = dvc.api.params_show()["preprocessing"] 
 rawDataPath = params["rawDataPath"]
 outDataFolder = params["outDataFolder"]
 
+os.makedirs(outDataFolder, exist_ok=True)
 
 data = pd.read_csv(rawDataPath)[['smiles','assay','value']]
 
