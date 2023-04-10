@@ -126,9 +126,6 @@ def train(model, optimizer, scheduler, folderPath, otuputFolder, epochs=5):
 if __name__ == '__main__':
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     
-    print(device)
-    print(torch.cuda.is_available())
-    
     params = dvc.api.params_show()
     
     latentDim = params['latentDim']
