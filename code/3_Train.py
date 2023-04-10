@@ -27,9 +27,9 @@ def handle_interrupt(signal_number, frame):
     
 signal.signal(signal.SIGINT, handle_interrupt)
 
-def cvaeLoss(x, xHat, mu, logvar):
+def cvaeLoss(x, xHat, mu, logvar, beta=0.7):
     RECON = F.cross_entropy(xHat, x)
-    KLD = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
+    KLD = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp()) * beta
     return RECON + KLD, RECON.item(), KLD.item()
 
 def evaluate(model, validTensors):
@@ -62,8 +62,8 @@ def evaluate(model, validTensors):
 def train(model, optimizer, scheduler, folderPath, otuputFolder, epochs=5):
     trainTensors, validTensors = loadTrainData(folderPath)
     
-    trainTensors = trainTensors[:1000]
-    validTensors = validTensors[:1000]
+    trainTensors = trainTensors[::2]
+    validTensors = validTensors[::2]
     
     checkpointId = 0
     bestTrainLoss = np.inf
@@ -125,6 +125,10 @@ def train(model, optimizer, scheduler, folderPath, otuputFolder, epochs=5):
 
 if __name__ == '__main__':
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    
+    print(device)
+    print(torch.cuda.is_available())
+    
     params = dvc.api.params_show()
     
     latentDim = params['latentDim']
