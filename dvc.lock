@@ -1,0 +1,85 @@
+schema: '2.0'
+stages:
+  download:
+    cmd: python code/1_Download.py
+    deps:
+    - path: code/1_Download.py
+      md5: e02afef81d0c6fd65c6e7c1869ce1560
+      size: 821
+    outs:
+    - path: data/raw
+      md5: d2da5dbd826846e483eacdb48bbbca8c.dir
+      size: 85022644
+      nfiles: 1
+  preprocessing:
+    cmd: python code/2_Preprocess.py
+    deps:
+    - path: code/2_Preprocess.py
+      md5: f638edbc4f72f7584db32ebe6d1035bd
+      size: 1911
+    - path: data/raw
+      md5: d2da5dbd826846e483eacdb48bbbca8c.dir
+      size: 85022644
+      nfiles: 1
+    outs:
+    - path: data/processed
+      md5: 8846e9f1e0a994e56fb420c45e13db1e.dir
+      size: 3031133151
+      nfiles: 5
+  train:
+    cmd: python code/3_Train.py
+    deps:
+    - path: code/3_Train.py
+      md5: b43f3c10f9c6fd267850637bd640faeb
+      size: 6175
+    - path: data/processed
+      md5: 8846e9f1e0a994e56fb420c45e13db1e.dir
+      size: 3031133151
+      nfiles: 5
+    outs:
+    - path: metrics/train
+      md5: 9c87a169273339160ccdb1a58c536ca7.dir
+      size: 3626
+      nfiles: 3
+    - path: models/train
+      md5: a74f50b6b86a7ee61bc981955471cdf9.dir
+      size: 20871108604
+      nfiles: 16
+  inference:
+    cmd: python code/5_Inference.py
+    deps:
+    - path: code/5_Inference.py
+      md5: b52ee1070ea0f9233c3b059585789a63
+      size: 1834
+    - path: data/processed
+      md5: 8846e9f1e0a994e56fb420c45e13db1e.dir
+      size: 3031133151
+      nfiles: 5
+    - path: models/train
+      md5: a74f50b6b86a7ee61bc981955471cdf9.dir
+      size: 20871108604
+      nfiles: 16
+    outs:
+    - path: metrics/inference
+      md5: 0e8b895431b269660abfa9c6d63b5bc7.dir
+      size: 146237
+      nfiles: 1
+  test:
+    cmd: python code/4_Test.py
+    deps:
+    - path: code/4_Test.py
+      md5: 3fa0f63035a281c7e0ff6396920e3328
+      size: 2781
+    - path: data/processed
+      md5: 8846e9f1e0a994e56fb420c45e13db1e.dir
+      size: 3031133151
+      nfiles: 5
+    - path: models/train
+      md5: a74f50b6b86a7ee61bc981955471cdf9.dir
+      size: 20871108604
+      nfiles: 16
+    outs:
+    - path: metrics/test
+      md5: cd373fc7b13c0ee967a8e9b581fb947c.dir
+      size: 81
+      nfiles: 1
