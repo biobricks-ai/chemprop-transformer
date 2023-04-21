@@ -44,7 +44,7 @@ with open('{}/modelInfo.json'.format(outDataFolder), 'w') as f:
 
 vocabs = {
     'smileVocab': smiCharSet,
-    'assayMap': assayIndexMap
+    'assayMap': uniqueAssays
 }
 
 with open('{}/vocabs.json'.format(outDataFolder), 'w') as f:
