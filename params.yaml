@@ -6,6 +6,7 @@ download:
 preprocessing:
   rawDataPath: data/raw/RawChemHarmony.csv
   outDataFolder: data/processed/
+  maxEmbeddingSize: 244
 
 training:
   metricsOutPath: metrics/train/

@@ -2,13 +2,12 @@ import json
 import numpy as np
 import pandas as pd
 import torch
-import torch.nn.functional as F
+
 from tqdm import tqdm
-
-
 tqdm.pandas()
 
 import dvc.api
+
 from utils import generateCharSet, toEmbedding, idTo1Hot
 import os
 
@@ -18,23 +17,21 @@ outDataFolder = params["outDataFolder"]
 
 os.makedirs(outDataFolder, exist_ok=True)
 
-data = pd.read_csv(rawDataPath)[['smiles','assay','value']]
+maxEmbeddingSize = params["maxEmbeddingSize"]
+maxEmbeddingSize = 60 #data['smiles'].str.len().max()
 
-uniqueAssays = data['assay']
-uniqueAssays = set(uniqueAssays)
-uniqueAssays = list(uniqueAssays)
+activities = pd.read_csv(rawDataPath)[['smiles','assay','value']]
+activities = activities[activities['smiles'].str.len() <= maxEmbeddingSize]
 
-maxEmbeddingSize = 244 #data['smiles'].str.len().max()
+uniqueAssays = activities['assay'].unique().tolist()
 maxAssaySize = len(uniqueAssays)
-
 assayIndexMap = {assay:i for i,assay in enumerate(uniqueAssays)}
 
-smiCharSet, smiCharToInt, _ = generateCharSet(data['smiles'], maxEmbeddingSize)
+smiCharSet, smiCharToInt, _ = generateCharSet(activities['smiles'], maxEmbeddingSize)
 
-data['smiles'] = data['smiles'].progress_apply(lambda smiles: toEmbedding(smiles, smiCharToInt, maxEmbeddingSize))
-data['assay'] = data['assay'].progress_apply(lambda assay: idTo1Hot(assayIndexMap[assay], maxAssaySize))
-data['value'] = data['value'].progress_apply(lambda value: torch.tensor([value]))
-
+activities['smiles'] = activities['smiles'].progress_apply(lambda smiles: toEmbedding(smiles, smiCharToInt, maxEmbeddingSize))
+activities['assay'] = activities['assay'].progress_apply(lambda assay: idTo1Hot(assayIndexMap[assay], maxAssaySize))
+activities['value'] = activities['value'].progress_apply(lambda value: torch.tensor([value]))
 
 modelInfo = {
     'embeddingSize' : maxEmbeddingSize,
@@ -54,10 +51,10 @@ with open('{}/vocabs.json'.format(outDataFolder), 'w') as f:
     json.dump(vocabs, f, indent=4)
 
 
-trainSet = data.sample(frac=.7)
-data = data.drop(trainSet.index)
-testSet = data.sample(frac=.5)
-validSet = data.drop(testSet.index)
+trainSet = activities.sample(frac=.7)
+activities = activities.drop(trainSet.index)
+testSet = activities.sample(frac=.5)
+validSet = activities.drop(testSet.index)
 
 trainTensors = trainSet.values.tolist()
 testTensors = testSet.values.tolist()
