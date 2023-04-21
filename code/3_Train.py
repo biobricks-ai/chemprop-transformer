@@ -27,7 +27,7 @@ def handle_interrupt(signal_number, frame):
     
 signal.signal(signal.SIGINT, handle_interrupt)
 
-def cvaeLoss(x, xHat, mu, logvar, beta=0):
+def cvaeLoss(x, xHat, mu, logvar, beta=0.7):
     RECON = F.cross_entropy(xHat, x)
     KLD = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp()) * beta
     return RECON + KLD, RECON.item(), KLD.item()
