@@ -22,7 +22,7 @@ def test(model, vocab, metricsOutPath, processedData):
     for data in tqdm(testTensors):
         embedding, labels = prepareInputs(data, model.vocabSize, device)
         
-        xHat, _, _ = model(embedding, labels)
+        xHat, _, _, _ = model(embedding, labels)
         
         indexedOri = list(data[0])
         indexedPred = torch.argmax(xHat, dim=1).tolist()

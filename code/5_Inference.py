@@ -1,6 +1,6 @@
 import torch
 from CVAE.model import CVAE
-from utils import loadTest, idTo1Hot, prepareInputs
+from utils import loadTest, plotTSNE, prepareInputs
 from tqdm import tqdm
 import numpy as np
 from rdkit import Chem, DataStructs
@@ -14,7 +14,7 @@ import dvc.api
 import os
 
 
-def inference(model, processedData):
+def inference(model, processedData, vocab):
     vocabSize = model.vocabSize
     
     model = model.encoder
@@ -23,7 +23,16 @@ def inference(model, processedData):
     testTensors = loadTest(processedData)
     testTensors = testTensors[:1000]
     
+    #tsne
+    encodedList = []
+    assayList = []
+    valueList = []
+    
     for data in tqdm(testTensors):
+        assay = int(np.argmax(data[1]))
+        assay =  vocab['assayMap'][assay]
+        value = data[2].tolist()[0]
+        
         embedding, labels = prepareInputs(data, vocabSize, device)
         embedding = embedding.view(-1)
         
@@ -34,9 +43,11 @@ def inference(model, processedData):
         
         z = zMean + eps*std
         
-        plt.scatter(z.tolist(), z.tolist()[::-1])
-        
-    plt.savefig('{}reconVisualization.png'.format(metricsOutPath))
+        encodedList.append(z.tolist())
+        assayList.append(assay)
+        valueList.append(value)
+    
+    plotTSNE(encodedList, assayList, valueList, 512, plotsOutPath='{}reconVisualization'.format(metricsOutPath), colorCol='Activity')
         
 
 if __name__ == '__main__':
@@ -54,6 +65,9 @@ if __name__ == '__main__':
     
     with open('{}/modelInfo.json'.format(processedData)) as f:
         modelInfo = json.load(f)
+        
+    with open('{}/vocabs.json'.format(processedData)) as f:
+        vocab = json.load(f)
     
     embeddingSize = modelInfo['embeddingSize']
     vocabSize = modelInfo['vocabSize']
@@ -66,4 +80,4 @@ if __name__ == '__main__':
     
     model.load_state_dict(torch.load('{}bestModel.pt'.format(modelFolder)))
     
-    inference(model, processedData)
+    inference(model, processedData, vocab)
