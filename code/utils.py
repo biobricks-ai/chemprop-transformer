@@ -1,7 +1,13 @@
 import numpy as np
 import torch
-import torch.nn.functional as F
 from tqdm import tqdm
+import warnings
+
+import pandas as pd
+from sklearn.preprocessing import StandardScaler
+from sklearn.manifold import TSNE
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 def generateCharSet(data, maxLength):
     charSet = set([' '])
@@ -71,3 +77,34 @@ def prepareInputs(data, vocabSize, device):
     
     return embedding, labels
 
+
+def plotTSNE(embeddings, activity, values, latentSpaceSize=512, plotsOutPath='/', colorCol='Activity'):
+    labels = ['z{}'.format(i) for i in range(latentSpaceSize)]
+    
+    df = pd.DataFrame(embeddings, columns=labels)
+    scaled = StandardScaler().fit_transform(df)
+    scaled = pd.DataFrame(scaled, columns=labels)
+    
+    tsne = TSNE(init='pca', learning_rate='auto')
+    
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        tsne_features = tsne.fit_transform(scaled)
+    
+    tsne_df = pd.DataFrame(
+        data=tsne_features, 
+        columns=['TSNE1', 'TSNE2'])
+    
+    tsne_df['Activity'] = activity
+    tsne_df['Value'] = values
+    
+    sns.lmplot(
+        x='TSNE1', 
+        y='TSNE2', 
+        data=tsne_df, 
+        hue=colorCol, 
+        fit_reg=False, 
+        legend=True
+        )
+        
+    plt.savefig('{}TSNE.png'.format(plotsOutPath))

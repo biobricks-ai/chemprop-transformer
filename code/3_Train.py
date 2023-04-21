@@ -13,7 +13,7 @@ import torch.utils.data
 from tqdm import tqdm
 
 from CVAE.model import CVAE
-from utils import loadTrainData, prepareInputs
+from utils import loadTrainData, prepareInputs, plotTSNE
 from torch.optim.lr_scheduler import ExponentialLR
 
 torch.set_default_tensor_type(torch.FloatTensor)
@@ -27,7 +27,7 @@ def handle_interrupt(signal_number, frame):
     
 signal.signal(signal.SIGINT, handle_interrupt)
 
-def cvaeLoss(x, xHat, mu, logvar, beta=0.7):
+def cvaeLoss(x, xHat, mu, logvar, beta=0):
     RECON = F.cross_entropy(xHat, x)
     KLD = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp()) * beta
     return RECON + KLD, RECON.item(), KLD.item()
@@ -42,7 +42,7 @@ def evaluate(model, validTensors):
         embedding, labels = prepareInputs(data, model.vocabSize, device)
         
         with torch.no_grad():
-            xHat, z_mean, z_logvar = model(embedding, labels)
+            xHat, z_mean, z_logvar, encodedEmbedding = model(embedding, labels)
             loss, recon, kld = cvaeLoss(embedding, xHat, z_mean, z_logvar)
             evalLoss.append(loss.item())
             reconLoss.append(recon)
@@ -59,11 +59,8 @@ def evaluate(model, validTensors):
     return evalLoss, reconLoss, kldLoss
     
 
-def train(model, optimizer, scheduler, folderPath, otuputFolder, epochs=5):
+def train(model, optimizer, scheduler, folderPath, otuputFolder, vocab, epochs=5):
     trainTensors, validTensors = loadTrainData(folderPath)
-    
-    trainTensors = trainTensors[::2]
-    validTensors = validTensors[::2]
     
     checkpointId = 0
     bestTrainLoss = np.inf
@@ -75,10 +72,21 @@ def train(model, optimizer, scheduler, folderPath, otuputFolder, epochs=5):
         epochLoss = []
         reconLoss = []
         kldLoss = []
+        
+        #tsne
+        encodedList = []
+        assayList = []
+        valueList = []
+        
         for data in tqdm(trainTensors):
+            
+            assay = int(np.argmax(data[1]))
+            assay =  vocab['assayMap'][assay]
+            value = data[2].tolist()[0]
+            
             embedding, labels = prepareInputs(data, model.vocabSize, device)
             
-            xHat, z_mean, z_logvar = model(embedding, labels)
+            xHat, z_mean, z_logvar, encodedEmbedding = model(embedding, labels)
             loss, recon, kld = cvaeLoss(embedding, xHat, z_mean, z_logvar)
             epochLoss.append(loss.item())
             reconLoss.append(recon)
@@ -86,6 +94,10 @@ def train(model, optimizer, scheduler, folderPath, otuputFolder, epochs=5):
             
             loss.backward()
             optimizer.step()
+            
+            encodedList.append(encodedEmbedding)
+            assayList.append(assay)
+            valueList.append(value)
             
             if signal_received:
                 print('Stopping actual train step...')
@@ -115,6 +127,8 @@ def train(model, optimizer, scheduler, folderPath, otuputFolder, epochs=5):
             torch.save(model.state_dict(),'{}checkpoint{}epoch{}.pt'.format(otuputFolder, checkpointId, epoch))
             torch.save(model.state_dict(),'{}bestModel.pt'.format(otuputFolder))
             
+            plotTSNE(encodedList, assayList, valueList, 512, plotsOutPath='{}tsne/checkpoint{}epoch{}'.format(metricsOutPath, checkpointId, epoch), colorCol='Activity')
+            
             checkpointId += 1
             
         if signal_received:
@@ -137,6 +151,7 @@ if __name__ == '__main__':
     
     os.makedirs(outModelFolder, exist_ok=True)
     os.makedirs(metricsOutPath, exist_ok=True)
+    os.makedirs('{}tsne/'.format(metricsOutPath), exist_ok=True)
     
     with open('{}loss.tsv'.format(metricsOutPath), 'w') as f:
         f.write('step\ttLoss\teLoss\n')
@@ -150,6 +165,9 @@ if __name__ == '__main__':
     with open('{}/modelInfo.json'.format(processedDataPath)) as f:
         modelInfo = json.load(f)
         
+    with open('{}/vocabs.json'.format(processedDataPath)) as f:
+        vocab = json.load(f)
+        
     embeddingSize = modelInfo['embeddingSize']
     vocabSize = modelInfo['vocabSize']
     assaySize = modelInfo['assaySize']
@@ -158,7 +176,8 @@ if __name__ == '__main__':
     
     model = CVAE(embeddingSize, vocabSize, labelsSize, latentDim)
     model = model.to(device)
+    
     optimizer = optim.Adam(model.parameters(), lr=0.000001)
     scheduler = ExponentialLR(optimizer, gamma=0.96, last_epoch=-1)
     
-    train(model, optimizer, scheduler, processedDataPath, outModelFolder, epochs)
+    train(model, optimizer, scheduler, processedDataPath, outModelFolder, vocab, epochs)

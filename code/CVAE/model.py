@@ -104,8 +104,8 @@ class CVAE(nn.Module):
     def forward(self, embedding, labels):
         embedding = embedding.view(-1)
         zMean, zLogvar = self.encoder(embedding, labels)
-        z = self.reparametrize(zMean, zLogvar)
-        z = self.dropout(z)
+        latentSpace = self.reparametrize(zMean, zLogvar)
+        z = self.dropout(latentSpace)
         yPred = self.decoder(z, labels)
         yPred = yPred.view(self.embeddingSize, self.vocabSize)
-        return yPred, zMean, zLogvar
+        return yPred, zMean, zLogvar, latentSpace.tolist()
