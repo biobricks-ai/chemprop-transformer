@@ -15,6 +15,15 @@ def generateCharSet(data, maxLength):
         charSet = charSet.union(set(smi.ljust(maxLength)))
         
     charSet = sorted(list(charSet))
+    
+    # smiles end token
+    if '~' not in charSet:
+        charSet.append('~')
+    elif '^' not in charSet:
+        charSet.append('^')
+    else:
+        charSet.append(False) # if there is no smiles end token
+          
     charToInt = dict((c, i) for i, c in enumerate(charSet))
     intToChar = dict((i, c) for i, c in enumerate(charSet))
     return charSet, charToInt, intToChar
@@ -73,7 +82,8 @@ def prepareInputs(data, vocabSize, device):
     value = torch.Tensor(value)
     value = value.to(device)
     
-    labels = torch.cat((assay, value), dim=0)
+    # labels = torch.cat((assay, value), dim=0)
+    labels = value
     
     return embedding, labels
 
@@ -108,3 +118,19 @@ def plotTSNE(embeddings, activity, values, latentSpaceSize=512, plotsOutPath='/'
         )
         
     plt.savefig('{}TSNE.png'.format(plotsOutPath))
+    
+    
+def generateMask(tokens, endToken):
+    mask = []
+    endTkFound = False
+    for tk in tokens.tolist():
+        if tk == endToken:
+            endTkFound = True
+                
+        if endTkFound:
+            mask.append(0)
+        else:
+            mask.append(1)
+            
+    mask = torch.Tensor(mask)
+    return mask

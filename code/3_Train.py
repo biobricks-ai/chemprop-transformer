@@ -13,7 +13,7 @@ import torch.utils.data
 from tqdm import tqdm
 
 from CVAE.model import CVAE
-from utils import loadTrainData, prepareInputs, plotTSNE
+from utils import loadTrainData, prepareInputs, plotTSNE, generateMask
 from torch.optim.lr_scheduler import ExponentialLR
 
 torch.set_default_tensor_type(torch.FloatTensor)
@@ -27,23 +27,35 @@ def handle_interrupt(signal_number, frame):
     
 signal.signal(signal.SIGINT, handle_interrupt)
 
-def cvaeLoss(x, xHat, mu, logvar, beta=0.7):
-    RECON = F.cross_entropy(xHat, x)
+def cvaeLoss(x, xHat, mu, logvar, mask=None, beta=1):
+    if mask is not None:
+        RECON = F.cross_entropy(xHat, x, reduction='none')
+        RECON = RECON * mask
+        RECON = torch.sum(RECON) / torch.sum(mask)
+    else:
+        RECON = F.cross_entropy(xHat, x)
+        
     KLD = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp()) * beta
     return RECON + KLD, RECON.item(), KLD.item()
 
 def evaluate(model, validTensors):
+    
+    endToken = model.vocabSize-1
+    
     model.eval()
     evalLoss = []
     reconLoss = []
     kldLoss = []
     for data in tqdm(validTensors):
         
+        mask = generateMask(data[0], endToken)
+        mask = mask.to(device)
+        
         embedding, labels = prepareInputs(data, model.vocabSize, device)
         
         with torch.no_grad():
-            xHat, z_mean, z_logvar, encodedEmbedding = model(embedding, labels)
-            loss, recon, kld = cvaeLoss(embedding, xHat, z_mean, z_logvar)
+            xHat, z_mean, z_logvar, _ = model(embedding, labels)
+            loss, recon, kld = cvaeLoss(embedding, xHat, z_mean, z_logvar, mask)
             evalLoss.append(loss.item())
             reconLoss.append(recon)
             kldLoss.append(kld)
@@ -79,6 +91,9 @@ def train(model, optimizer, scheduler, folderPath, otuputFolder, vocab, epochs=5
         valueList = []
         
         for data in tqdm(trainTensors):
+        
+            mask = generateMask(data[0], model.vocabSize-1)
+            mask = mask.to(device)
             
             assay = int(np.argmax(data[1]))
             assay =  vocab['assayMap'][assay]
@@ -87,7 +102,7 @@ def train(model, optimizer, scheduler, folderPath, otuputFolder, vocab, epochs=5
             embedding, labels = prepareInputs(data, model.vocabSize, device)
             
             xHat, z_mean, z_logvar, encodedEmbedding = model(embedding, labels)
-            loss, recon, kld = cvaeLoss(embedding, xHat, z_mean, z_logvar)
+            loss, recon, kld = cvaeLoss(embedding, xHat, z_mean, z_logvar, mask)
             epochLoss.append(loss.item())
             reconLoss.append(recon)
             kldLoss.append(kld)
