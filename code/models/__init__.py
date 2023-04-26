@@ -1,0 +1,1 @@
+from .MoleculeVAE import MoleculeVAE as mvae
