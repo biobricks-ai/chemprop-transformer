@@ -1,68 +1,55 @@
-import json
-import numpy as np
-import pandas as pd
-import torch
-import torch.nn.functional as F
+import json, torch, numpy as np, pandas as pd
+import utils, pathlib
 from tqdm import tqdm
-
-
+from torch.utils.data import TensorDataset, random_split
+import models, models.tokenizer
 tqdm.pandas()
 
-import dvc.api
-from utils import generateCharSet, toEmbedding, idTo1Hot
-import os
 
-params = dvc.api.params_show()["preprocessing"] 
-rawDataPath = params["rawDataPath"]
-outDataFolder = params["outDataFolder"]
+params = utils.loadparams()['preprocessing']
+data = pd.read_csv(utils.res(params["rawDataPath"]))[['smiles','assay','value']]
+data = data.sample(frac=1) # 6738282 rows
 
-os.makedirs(outDataFolder, exist_ok=True)
+# REMOVE ROWS THAT CAN'T BE TOKENIZED =======================================
+charset = models.tokenizer.charset
+valid_smiles = lambda smiles: all(char in charset for char in smiles)
+valid_smiles = data['smiles'].progress_apply(valid_smiles)
+data = data[valid_smiles] # 6733185 rows
 
-data = pd.read_csv(rawDataPath)[['smiles','assay','value']]
+# ASSAY UUID TO INDEX TENSOR called `tass` or 'tensor_assay' 
+assayidx = {assay:i for i,assay in enumerate( np.unique(data['assay']) )}
+tass = data['assay'].progress_apply(lambda a: assayidx[a])
+tass = torch.tensor(tass)
 
-uniqueAssays = data['assay']
-uniqueAssays = set(uniqueAssays)
-uniqueAssays = list(uniqueAssays)
+# SMILES TO RANK 2 INDEX TENSOR called `tsmi` or `tensor_smiles`
+tsmi = data['smiles'].progress_apply(models.tokenizer.smiles_one_hot)
+tsmi = torch.vstack(tsmi)
 
-maxEmbeddingSize = 244 #data['smiles'].str.len().max()
-maxAssaySize = len(uniqueAssays)
+# BINARY VALUE TO TENSOR `tval` or `tensor_value`
+tval = torch.tensor(data['value'])
 
-assayIndexMap = {assay:i for i,assay in enumerate(uniqueAssays)}
+# MolecularVAE ENCODINGS
+mvae = models.MoleculeVAE.load(utils.res("resources/chembl_23_model.h5"))
 
-smiCharSet, smiCharToInt, _ = generateCharSet(data['smiles'], maxEmbeddingSize)
+# WRITE MODEL PARAMS AND VOCABS TO FILE
+outdir = pathlib.Path(utils.res(params["outDataFolder"]))
+outdir.mkdir(parents=True, exist_ok=True)
 
-data['smiles'] = data['smiles'].progress_apply(lambda smiles: toEmbedding(smiles, smiCharToInt, maxEmbeddingSize))
-data['assay'] = data['assay'].progress_apply(lambda assay: idTo1Hot(assayIndexMap[assay], maxAssaySize))
-data['value'] = data['value'].progress_apply(lambda value: torch.tensor([value]))
+vocabs = {'smiles_vocab': smiCharToInt, 'assays_vocab': assayidx}
+(outdir / 'vocabs.json').write_text(json.dumps(vocabs, indent=4))
 
+model_info = { 'smiles_padlength': smi_padlength }
+model_info['smiles_vocabsize'] = len(smiCharToInt)
+model_info['assays_vocabsize'] = len(assayidx)
+(outdir / 'modelInfo.json').write_text(json.dumps(model_info, indent=4))
 
-modelInfo = {
-    'embeddingSize' : maxEmbeddingSize,
-    'vocabSize': len(smiCharSet),
-    'assaySize': maxAssaySize,
-}
+# BUILD TRAIN/TEST/VALIDATION 
+tdata = TensorDataset(tsmi, tass, tval)
+ntrn = int(0.8*len(tdata))
+nval = (len(tdata) - ntrn) // 2  
+nhld = len(tdata) - ntrn - nval 
 
-with open('{}/modelInfo.json'.format(outDataFolder), 'w') as f:
-    json.dump(modelInfo, f, indent=4)
-
-vocabs = {
-    'smileVocab': smiCharSet,
-    'assayMap': assayIndexMap
-}
-
-with open('{}/vocabs.json'.format(outDataFolder), 'w') as f:
-    json.dump(vocabs, f, indent=4)
-
-
-trainSet = data.sample(frac=.7)
-data = data.drop(trainSet.index)
-testSet = data.sample(frac=.5)
-validSet = data.drop(testSet.index)
-
-trainTensors = trainSet.values.tolist()
-testTensors = testSet.values.tolist()
-validTensors = validSet.values.tolist()
-
-np.save('{}/train.npy'.format(outDataFolder), trainTensors)
-np.save('{}/test.npy'.format(outDataFolder), testTensors)
-np.save('{}/valid.npy'.format(outDataFolder), validTensors)
+trn, val, hld = random_split(tdata, [ntrn, nval, nhld])
+torch.save(trn, outdir / 'train.pt')
+torch.save(val, outdir / 'validation.pt')
+torch.save(hld, outdir / 'holdout.pt')

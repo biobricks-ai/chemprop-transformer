@@ -1,18 +1,9 @@
-import biobricks as bb
-import numpy as np
-import dvc.api
-import os
+import dvc.api, os, biobricks as bb
 
-bb.install('chemharmony')
-chemharmony = bb.load('chemharmony')
-activities = chemharmony.activities.read().to_pandas()[['smiles','pid','value']]
+chemharmony = bb.load('chemharmony').activities
 
-activities = activities.dropna()
-activities = activities.replace(['negative', 'Negative', 'inactive', 'Inactive'], 0)
-activities = activities.replace(['positive', 'Positive', 'Active', 'active antagonist', 'active agonist'], 1)
-activities = activities.replace(['quartile_1', 'quartile_2', 'quartile_3', 'quartile_4',], 1)
-activities = activities[ activities['smiles'].str.len() <= 244]
-activities.columns = ['smiles','assay','value']
+activities = chemharmony.read().to_pandas()[['smiles','pid','binary_value']]
+activities = activities.rename(columns={'pid':'assay','binary_value':'value'})
 
 params = dvc.api.params_show()
 outFolder = params['download']['outFolder']

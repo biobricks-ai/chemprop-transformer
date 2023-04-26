@@ -1,7 +1,22 @@
-import numpy as np
-import torch
+import dvc.api, numpy as np, torch, os
+from pathlib import Path
 import torch.nn.functional as F
 from tqdm import tqdm
+
+def rootdir(p=Path(os.getcwd())):
+    isroot = (p / 'dvc.yaml').exists()
+    return p if(isroot) else rootdir(p.parent) if p.parent != p else None
+
+def loadparams():
+    cwd = os.getcwd()
+    os.chdir(rootdir())
+    res = dvc.api.params_show()
+    os.chdir(cwd)
+    return res
+
+def res(path):
+    "Returns the path relative to the root directory"
+    return rootdir() / path
 
 def generateCharSet(data, maxLength):
     charSet = set([' '])
@@ -20,7 +35,7 @@ def idTo1Hot(id, labelsLength):
     return hotTensor
 
 def toEmbedding(dataIn, charToInt, maxLength):
-    dataIn = dataIn.ljust(maxLength)
+    dataIn = dataIn.ljust(maxLength)[0:maxLength]
     dataIn = list(dataIn)
     embedding = [charToInt[c] for c in dataIn]
     return np.array(embedding)
@@ -31,43 +46,3 @@ def embeddingAccuracy(x, xHat):
         if x[i] == xHat[i]:
             correct += 1  
     return (correct/len(x))*100
-
-def loadTrain(folderPath):
-    print('loading training set...')
-    trainTensors = np.load('{}train.npy'.format(folderPath), allow_pickle=True)
-    return trainTensors
-
-def loadTest(folderPath):
-    print('loading testing set...')
-    testTensors = np.load('{}test.npy'.format(folderPath), allow_pickle=True)
-    return testTensors
-
-def loadValid(folderPath):
-    print('loading validation set...')
-    validTensors = np.load('{}valid.npy'.format(folderPath), allow_pickle=True)
-    return validTensors
-
-def loadTrainData(folderPath):
-    trainTensors = loadTrain(folderPath)
-    validTensors = loadValid(folderPath)
-    print('done!')
-    
-    return trainTensors, validTensors
-
-def prepareInputs(data, vocabSize, device):
-    embedding = np.array([idTo1Hot(i, vocabSize) for i in list(data[0])])
-    embedding = torch.Tensor(embedding)
-    embedding = embedding.to(device)
-
-    assay = data[1]
-    assay = torch.Tensor(assay)
-    assay = assay.to(device)
-    
-    value = data[2]
-    value = torch.Tensor(value)
-    value = value.to(device)
-    
-    labels = torch.cat((assay, value), dim=0)
-    
-    return embedding, labels
-

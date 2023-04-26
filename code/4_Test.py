@@ -1,13 +1,9 @@
-import torch
-from CVAE.model import CVAE
-from utils import loadTest, prepareInputs, embeddingAccuracy
+from utils import embeddingAccuracy
 from tqdm import tqdm
-import numpy as np
 from rdkit import Chem, DataStructs
+from CVAE.model import CVAE
+import torch, numpy as np, json, dvc.api, os
 
-import json
-import dvc.api
-import os
 
 def test(model, vocab, metricsOutPath, processedData):
     model.eval()
