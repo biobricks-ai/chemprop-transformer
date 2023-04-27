@@ -46,3 +46,32 @@ def embeddingAccuracy(x, xHat):
         if x[i] == xHat[i]:
             correct += 1  
     return (correct/len(x))*100
+
+def accuracy(pred, inval):
+    pred = torch.sigmoid(pred)
+    y_pred = (pred > 0.5).float()
+    
+    correct = (y_pred == inval).sum().item()
+    total = inval.size(0)
+    
+    # Calculate accuracy
+    acc = correct / total
+    return acc
+
+def balanced_accuracy(pred, inval):
+    pred = torch.sigmoid(pred)
+    y_pred = (pred > 0.5).float()
+
+    true_positives = torch.zeros(2)
+    false_negatives = torch.zeros(2)
+    false_positives = torch.zeros(2)
+
+    for i in range(2):
+        true_positives[i] = ((y_pred == i) & (inval == i)).sum().item()
+        false_negatives[i] = ((y_pred != i) & (inval == i)).sum().item()
+        false_positives[i] = ((y_pred == i) & (inval != i)).sum().item()
+
+    recall_per_class = true_positives / (true_positives + false_negatives)
+    balanced_acc = torch.mean(recall_per_class).item()
+
+    return balanced_acc
