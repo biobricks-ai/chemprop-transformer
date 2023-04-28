@@ -1,6 +1,7 @@
 import h5py
 import numpy as np
 import pandas as pd
+import os
 
 from tqdm import tqdm
 tqdm.pandas()
@@ -132,7 +133,8 @@ def preProcess(path, outPath):
         f.create_dataset('data_valid_values', shape = validValues.shape, data = validValues)
         
 if __name__ == '__main__':
-    path = 'data/RawChemHarmony.csv'
-    outPath = 'data/ProcessedChemHarmony.h5'
+    path = 'data/raw/RawChemHarmony.csv'
+    outPath = 'data/processed/ProcessedChemHarmony.h5'
+    os.makedirs('data/processed', exist_ok=True)
     preProcess(path, outPath) 
         

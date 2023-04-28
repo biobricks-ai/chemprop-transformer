@@ -1,0 +1,40 @@
+stages:
+  download:
+    cmd: python code/0_download.py
+    deps:
+    - code/0_download.py
+    outs:
+    - data/raw
+  
+  preprocessing:
+    cmd: python code/1_preprocess.py
+    deps:
+    - code/1_preprocess.py
+    - code/utils.py
+    - data/raw
+    outs:
+    - data/processed
+
+  pretrain:
+    cmd: python code/2_pretrain.py
+    deps:
+    - code/2_pretrain.py
+    - code/modelUtils.py
+    - code/utils.py
+    - data/processed
+    outs:
+    - metrics/pretrain
+    - models/pretrain
+
+  train:
+    cmd: python code/3_train.py
+    deps:
+    - code/3_train.py
+    - code/modelUtils.py
+    - code/utils.py
+    - models/pretrain
+    outs:
+    - metrics/train
+    - models/train
+
+

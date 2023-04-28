@@ -3,7 +3,7 @@ import dvc.api
 import os
 
 
-os.makedirs('data/', exist_ok=True)
+os.makedirs('data/raw', exist_ok=True)
 
 bb.install('chemharmony')
 chemharmony = bb.load('chemharmony')
