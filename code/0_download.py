@@ -2,8 +2,8 @@ import biobricks as bb
 import dvc.api
 import os
 
-outFolder = 'data/'
-os.makedirs(outFolder, exist_ok=True)
+
+os.makedirs('data/', exist_ok=True)
 
 bb.install('chemharmony')
 chemharmony = bb.load('chemharmony')
@@ -15,4 +15,4 @@ activities = activities.drop_duplicates(subset=['group'])
 activities = activities[['smiles', 'pid', 'binary_value']]
 activities.columns = ['smiles','assay','value']
 
-activities.to_csv('{}RawChemHarmony.csv'.format(outFolder))
+activities.to_csv('data/RawChemHarmony.csv')
