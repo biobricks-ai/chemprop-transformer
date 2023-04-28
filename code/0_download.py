@@ -15,4 +15,4 @@ activities = activities.drop_duplicates(subset=['group'])
 activities = activities[['smiles', 'pid', 'binary_value']]
 activities.columns = ['smiles','assay','value']
 
-activities.to_csv('data/RawChemHarmony.csv')
+activities.to_csv('data/raw/RawChemHarmony.csv')
