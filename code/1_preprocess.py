@@ -49,7 +49,6 @@ def assayToHot(assay, assaySize):
 #     return (dataTrain, dataTest, charset)
 
 def preProcess(path, outPath):
-    # data = pd.read_csv(path)[['smiles','assay','value']]
     data = pd.read_csv(path)[['smiles', 'assay', 'value']]
     
     print('Generating charset')
