@@ -1,73 +1,89 @@
+import matplotlib.pyplot as plt
+
 import numpy as np
-import torch
-import torch.nn.functional as F
-from tqdm import tqdm
+import h5py
 
-def generateCharSet(data, maxLength):
-    charSet = set([' '])
-    for smi in tqdm(list(data)):
-        charSet = charSet.union(set(smi.ljust(maxLength)))
+def one_hot_array(i, n):
+    return map(int, [ix == i for ix in xrange(n)])
+
+def one_hot_index(vec, charset):
+    return map(charset.index, vec)
+
+def from_one_hot_array(vec):
+    oh = np.where(vec == 1)
+    if oh[0].shape == (0, ):
+        return None
+    return int(oh[0][0])
+
+def decode_smiles_from_indexes(vec, charset):
+    return "".join(map(lambda x: charset[x].decode("utf-8"), vec)).strip()
+
+
+def load_pretrain_dataset(filename):
+    with h5py.File(filename, 'r') as h5f:
+        data_train = h5f['data_pretrain'][:]
+        data_test = h5f['data_pretrain_test'][:]
+        charset =  h5f['charset'][:]
+        uniqueAssays =  h5f['uniqueAssays'][:]
         
-    charSet = sorted(list(charSet))
-    charToInt = dict((c, i) for i, c in enumerate(charSet))
-    intToChar = dict((i, c) for i, c in enumerate(charSet))
-    return charSet, charToInt, intToChar
+    return data_train, data_test, charset, uniqueAssays
 
-def idTo1Hot(id, labelsLength):
-    oneHot = [0]*labelsLength
-    oneHot[id] = 1
-    hotTensor = np.array(oneHot) #one hot probability tensor
-    return hotTensor
+def load_train_dataset(filename):
+    with h5py.File(filename, 'r') as h5f:
+        data_train = h5f['data_train'][:]
+        data_train_activities = h5f['data_train_activities'][:]
+        data_train_values = h5f['data_train_values'][:]
+        
+        data_test = h5f['data_test'][:]
+        data_test_activities = h5f['data_test_activities'][:]
+        data_test_values = h5f['data_test_values'][:]
+        
+        charset =  h5f['charset'][:]
+        uniqueAssays =  h5f['uniqueAssays'][:]
+        
+    return (data_train, data_train_activities, data_train_values), (data_test, data_test_activities, data_test_values), charset, uniqueAssays
 
-def toEmbedding(dataIn, charToInt, maxLength):
-    dataIn = dataIn.ljust(maxLength)
-    dataIn = list(dataIn)
-    embedding = [charToInt[c] for c in dataIn]
-    return np.array(embedding)
-
-def embeddingAccuracy(x, xHat):
-    correct = 0
-    for i in range(len(x)):
-        if x[i] == xHat[i]:
-            correct += 1  
-    return (correct/len(x))*100
-
-def loadTrain(folderPath):
-    print('loading training set...')
-    trainTensors = np.load('{}train.npy'.format(folderPath), allow_pickle=True)
-    return trainTensors
-
-def loadTest(folderPath):
-    print('loading testing set...')
-    testTensors = np.load('{}test.npy'.format(folderPath), allow_pickle=True)
-    return testTensors
-
-def loadValid(folderPath):
-    print('loading validation set...')
-    validTensors = np.load('{}valid.npy'.format(folderPath), allow_pickle=True)
-    return validTensors
-
-def loadTrainData(folderPath):
-    trainTensors = loadTrain(folderPath)
-    validTensors = loadValid(folderPath)
-    print('done!')
+def load_valid_dataset(filename):
+    with h5py.File(filename, 'r') as h5f:
+        data_valid = h5f['data_valid'][:]
+        data_valid_activities = h5f['data_valid_activities'][:]
+        data_valid_values = h5f['data_valid_values'][:]
+        
+        charset =  h5f['charset'][:]
+        uniqueAssays =  h5f['uniqueAssays'][:]
+        
+    return (data_valid, data_valid_activities, data_valid_values),  charset, uniqueAssays
     
-    return trainTensors, validTensors
 
-def prepareInputs(data, vocabSize, device):
-    embedding = np.array([idTo1Hot(i, vocabSize) for i in list(data[0])])
-    embedding = torch.Tensor(embedding)
-    embedding = embedding.to(device)
-
-    assay = data[1]
-    assay = torch.Tensor(assay)
-    assay = assay.to(device)
+def load_dataset(filename, split = True):
+    h5f = h5py.File(filename, 'r')
+    data_test = h5f['data_test'][:]
+    charset =  h5f['charset'][:]
     
-    value = data[2]
-    value = torch.Tensor(value)
-    value = value.to(device)
+    if split:
+        data_train = h5f['data_train'][:]
+    else:
+        data_train = None
+    data_test = h5f['data_test'][:]
+    charset =  h5f['charset'][:]
+    uniqueAssays =  h5f['uniqueAssays'][:]
+    h5f.close()
+    if split:
+        return (data_train, data_test, charset, uniqueAssays)
+    else:
+        return (data_test, charset, uniqueAssays)
     
-    labels = torch.cat((assay, value), dim=0)
     
-    return embedding, labels
-
+def plot_losses(recon_losses, kl_losses, out_path):
+    plt.clf()
+    fig, ax1 = plt.subplots()
+    ax1.set_xlabel('Epochs')
+    ax1.set_ylabel('Reconstruction', color='tab:red')
+    ax1.plot(recon_losses, color='tab:red')
+    ax1.tick_params(axis='y', labelcolor='tab:red')
+    
+    ax2 = ax1.twinx()
+    ax2.set_ylabel('KL', color='tab:blue')
+    ax2.plot(kl_losses, color='tab:blue')
+    ax2.tick_params(axis='y', labelcolor='tab:blue')
+    plt.savefig(f'{out_path}/loss.png')
