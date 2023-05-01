@@ -32,31 +32,6 @@ stages:
   pretrain:
     cmd: python code/2_pretrain.py
     deps:
-    - path: code/3_train.py
-      md5: f1ce13aeb7dc12ae56e1b6bf233eef83
-      size: 5261
-    - path: code/modelUtils.py
-      md5: 3539863063b94069618fd38cc19b1095
-      size: 291
-    - path: code/utils.py
-      md5: 789fd4c51708aacfe78b0d1d0df65f8d
-      size: 2869
-    - path: models/pretrain
-      md5: 80c9d72b50cd1b38c35888485cac95d8.dir
-      size: 2463161039
-      nfiles: 109
-    outs:
-    - path: metrics/train
-      md5: a5a1c0832d24889f7b38845e24501a32.dir
-      size: 74287
-      nfiles: 3
-    - path: models/train
-      md5: 1fd8daa3bbf4fb62eea6d81a8a18e4d7.dir
-      size: 3095684291
-      nfiles: 137
-  train:
-    cmd: python code/3_train.py
-    deps:
     - path: code/2_pretrain.py
       md5: 06eb3e639978bf93d7d1f6b380dae071
       size: 4659
@@ -79,3 +54,28 @@ stages:
       md5: 80c9d72b50cd1b38c35888485cac95d8.dir
       size: 2463161039
       nfiles: 109
+  train:
+    cmd: python code/3_train.py
+    deps:
+    - path: code/3_train.py
+      md5: f1ce13aeb7dc12ae56e1b6bf233eef83
+      size: 5261
+    - path: code/modelUtils.py
+      md5: 3539863063b94069618fd38cc19b1095
+      size: 291
+    - path: code/utils.py
+      md5: 789fd4c51708aacfe78b0d1d0df65f8d
+      size: 2869
+    - path: models/pretrain
+      md5: 80c9d72b50cd1b38c35888485cac95d8.dir
+      size: 2463161039
+      nfiles: 109
+    outs:
+    - path: metrics/train
+      md5: a5a1c0832d24889f7b38845e24501a32.dir
+      size: 74287
+      nfiles: 3
+    - path: models/train
+      md5: 1fd8daa3bbf4fb62eea6d81a8a18e4d7.dir
+      size: 3095684291
+      nfiles: 137
