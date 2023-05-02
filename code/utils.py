@@ -34,17 +34,6 @@ def load_train_dataset(filename):
         data_train_activities = h5f['data_train_activities'][:]
         data_train_values = h5f['data_train_values'][:]
         
-        data_test = h5f['data_test'][:]
-        data_test_activities = h5f['data_test_activities'][:]
-        data_test_values = h5f['data_test_values'][:]
-        
-        charset =  h5f['charset'][:]
-        uniqueAssays =  h5f['uniqueAssays'][:]
-        
-    return (data_train, data_train_activities, data_train_values), (data_test, data_test_activities, data_test_values), charset, uniqueAssays
-
-def load_valid_dataset(filename):
-    with h5py.File(filename, 'r') as h5f:
         data_valid = h5f['data_valid'][:]
         data_valid_activities = h5f['data_valid_activities'][:]
         data_valid_values = h5f['data_valid_values'][:]
@@ -52,7 +41,18 @@ def load_valid_dataset(filename):
         charset =  h5f['charset'][:]
         uniqueAssays =  h5f['uniqueAssays'][:]
         
-    return (data_valid, data_valid_activities, data_valid_values),  charset, uniqueAssays
+    return (data_train, data_train_activities, data_train_values), (data_valid, data_valid_activities, data_valid_values), charset, uniqueAssays
+
+def load_test_dataset(filename):
+    with h5py.File(filename, 'r') as h5f:
+        data_test = h5f['data_test'][:]
+        data_test_activities = h5f['data_test_activities'][:]
+        data_test_values = h5f['data_test_values'][:]
+        
+        charset =  h5f['charset'][:]
+        uniqueAssays =  h5f['uniqueAssays'][:]
+        
+    return (data_test, data_test_activities, data_test_values),  charset, uniqueAssays
     
 
 def load_dataset(filename, split = True):
@@ -74,7 +74,7 @@ def load_dataset(filename, split = True):
         return (data_test, charset, uniqueAssays)
     
     
-def plot_losses(recon_losses, kl_losses, out_path):
+def plot_recon_kl(recon_losses, kl_losses, out_path, file_name = 'loss'):
     plt.clf()
     fig, ax1 = plt.subplots()
     ax1.set_xlabel('Epochs')
@@ -86,4 +86,10 @@ def plot_losses(recon_losses, kl_losses, out_path):
     ax2.set_ylabel('KL', color='tab:blue')
     ax2.plot(kl_losses, color='tab:blue')
     ax2.tick_params(axis='y', labelcolor='tab:blue')
-    plt.savefig(f'{out_path}/loss.png')
+    plt.savefig(f'{out_path}/{file_name}.png')
+    
+def plot_metrics(metric_A, metric_B, out_path, file_name='loss'):
+    plt.plot(metric_A)
+    plt.plot(metric_B)
+    plt.savefig(f'{out_path}/{file_name}.png')
+    plt.close()
