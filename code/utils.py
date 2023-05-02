@@ -22,11 +22,11 @@ def decode_smiles_from_indexes(vec, charset):
 def load_pretrain_dataset(filename):
     with h5py.File(filename, 'r') as h5f:
         data_train = h5f['data_pretrain'][:]
-        data_test = h5f['data_pretrain_test'][:]
+        data_valid = h5f['data_pretrain_valid'][:]
         charset =  h5f['charset'][:]
         uniqueAssays =  h5f['uniqueAssays'][:]
         
-    return data_train, data_test, charset, uniqueAssays
+    return data_train, data_valid, charset, uniqueAssays
 
 def load_train_dataset(filename):
     with h5py.File(filename, 'r') as h5f:
