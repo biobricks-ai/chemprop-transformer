@@ -1,0 +1,81 @@
+schema: '2.0'
+stages:
+  download:
+    cmd: python code/0_download.py
+    deps:
+    - path: code/0_download.py
+      md5: db4da7a42267b653ce0d209c348b1093
+      size: 493
+    outs:
+    - path: data/raw
+      md5: f48bff5099d2b16e2782794b129af9de.dir
+      size: 586642866
+      nfiles: 1
+  preprocessing:
+    cmd: python code/1_preprocess.py
+    deps:
+    - path: code/1_preprocess.py
+      md5: ba60683a6370b497720ff8ae24edd8fb
+      size: 5226
+    - path: code/utils.py
+      md5: 1426e199d3f06f6e6fe40d4499afe57e
+      size: 3080
+    - path: data/raw
+      md5: f48bff5099d2b16e2782794b129af9de.dir
+      size: 586642866
+      nfiles: 1
+    outs:
+    - path: data/processed
+      md5: b064bc02724334163763ef3d15010358.dir
+      size: 11618693344
+      nfiles: 1
+  pretrain:
+    cmd: python code/2_pretrain.py
+    deps:
+    - path: code/2_pretrain.py
+      md5: 41ebbc922f485dfdb0173d283aa095b6
+      size: 6629
+    - path: code/modelUtils.py
+      md5: 3539863063b94069618fd38cc19b1095
+      size: 291
+    - path: code/utils.py
+      md5: 1426e199d3f06f6e6fe40d4499afe57e
+      size: 3080
+    - path: data/processed
+      md5: b064bc02724334163763ef3d15010358.dir
+      size: 11618693344
+      nfiles: 1
+    outs:
+    - path: metrics/pretrain
+      md5: 456a8b3610ba8bb1d354afbfb6de8631.dir
+      size: 135653
+      nfiles: 5
+    - path: models/pretrain
+      md5: 257dd90359fa948111640ac0b4da6a62.dir
+      size: 1898213148
+      nfiles: 84
+  train:
+    cmd: python code/3_train.py
+    deps:
+    - path: code/3_train.py
+      md5: 25db627ab7fb14228d4423f601712de3
+      size: 7483
+    - path: code/modelUtils.py
+      md5: 3539863063b94069618fd38cc19b1095
+      size: 291
+    - path: code/utils.py
+      md5: 1426e199d3f06f6e6fe40d4499afe57e
+      size: 3080
+    - path: models/pretrain
+      md5: 257dd90359fa948111640ac0b4da6a62.dir
+      size: 1898213148
+      nfiles: 84
+    outs:
+    - path: metrics/train
+      md5: 3c18bfda3d551fd3791fe0e6c65c388b.dir
+      size: 146839
+      nfiles: 5
+    - path: models/train
+      md5: db5461957f81bfb34a03b8b18dad0f3b.dir
+      size: 610095817
+      nfiles: 27
