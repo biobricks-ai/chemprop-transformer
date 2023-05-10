@@ -49,19 +49,12 @@ def preProcess(path, outPath):
     
     uniqueAssays = data['assay'].unique().tolist()
     assaysDict = {k:i for i, k in enumerate(uniqueAssays)}
-    
-    print(len(uniqueAssays))
-    
-    # preTrainData = pd.DataFrame(data['smiles'].unique(), columns = ['smiles'])
-    
-    # a1 = data[data['assay'] == '8bd16db6-124f-447c-98c1-d2a86849b333']
-    # a2 = data[data['assay'] == 'e597a518-81c2-41bf-b876-0e09f961ceb6']
-
-    # a2 = a2.sample(n=10000)
-
-    # data = pd.concat([a1, a2])
-    
     preTrainData = pd.DataFrame(data['smiles'].unique(), columns = ['smiles'])
+    
+    a1 = data[data['assay'] == '8bd16db6-124f-447c-98c1-d2a86849b333']
+    a2 = data[data['assay'] == 'e597a518-81c2-41bf-b876-0e09f961ceb6']
+    data = pd.concat([a1, a2])
+    
     print('Indexing embeddings for pretraining') 
     preTrainData['embedding'] = preTrainData['smiles'].progress_apply(lambda smiles: smiToEmbedding(smiles, charToInt))
     print('Enconding to 1hot embeddings for pretraining')
@@ -73,7 +66,7 @@ def preProcess(path, outPath):
     PretrainEmbeddings = np.array(list(preTrainSet['embedding']))
     PretrainValidEmbeddings  = np.array(list(preValidSet['embedding']))
        
-    data = data.sample(n=1000000)
+    # data = data.sample(n=1000000)
     print('Indexing embeddings for training') 
     data['embedding'] = data['smiles'].progress_apply(lambda smiles: smiToEmbedding(smiles, charToInt))
     print('Enconding to 1hot embeddings for training')

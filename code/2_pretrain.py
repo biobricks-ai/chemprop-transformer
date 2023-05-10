@@ -106,7 +106,7 @@ def pretrainLoop(model, optimizer, scheduler, train_loader, valid_loader, labels
         
         if pre_train_loss < best_pre_train_loss and valid_loss < best_valid_loss:
             best_pre_train_loss = pre_train_loss
-            torch.save(model.state_dict(), f'model/pretrain/checkpoint{checkpoint_count}epoch{epoch}pretrained_model.pt')
+            torch.save(model.state_dict(), f'models/pretrain/checkpoint{checkpoint_count}epoch{epoch}pretrained_model.pt')
             checkpoint_count += 1
             
         
@@ -135,7 +135,7 @@ def pretrainLoop(model, optimizer, scheduler, train_loader, valid_loader, labels
 if __name__ == '__main__':
     
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    dataPath='data/ProcessedChemHarmony.h5'
+    dataPath='data/processed/ProcessedChemHarmony.h5'
     
     data_train, data_valid, charset, uniqueAssays = load_pretrain_dataset(dataPath)
     data_train = torch.from_numpy(data_train).float()
@@ -158,7 +158,7 @@ if __name__ == '__main__':
     scheduler = ExponentialLR(optimizer, gamma=0.96, last_epoch=-1)
     
     os.makedirs('metrics/pretrain', exist_ok=True)
-    os.makedirs('model/pretrain', exist_ok=True)
+    os.makedirs('models/pretrain', exist_ok=True)
     
     with open('metrics/pretrain/loss.csv', 'w') as loss_file:
         loss_file.write('epoch, loss, recon_loss, kl_loss, valid_loss, valid_recon_loss, valid_kl_loss\n')

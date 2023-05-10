@@ -122,7 +122,7 @@ def trainLoop(model, optimizer, scheduler, train_loader, valid_loader, epochs=10
         if train_loss < best_train_loss and valid_loss < best_valid_loss:
             best_train_loss = train_loss
             best_valid_loss = valid_loss
-            torch.save(model.state_dict(), f'model/train/checkpoint{checkpoint_count}epoch{epoch}model.pt')
+            torch.save(model.state_dict(), f'models/train/checkpoint{checkpoint_count}epoch{epoch}model.pt')
             checkpoint_count += 1
             
         
@@ -151,8 +151,8 @@ def trainLoop(model, optimizer, scheduler, train_loader, valid_loader, epochs=10
 if __name__ == '__main__':
     
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    dataPath = 'data/ProcessedChemHarmony.h5'
-    pretrainedModelPath = 'model/pretrain/checkpoint99epoch150pretrained_model.pt'
+    dataPath = 'data/processed/ProcessedChemHarmony.h5'
+    pretrainedModelPath = 'models/pretrain/checkpoint60epoch101pretrained_model.pt'
     num_epochs = 300
     batch_size=250
     
@@ -191,7 +191,7 @@ if __name__ == '__main__':
     scheduler = ExponentialLR(optimizer, gamma=0.96, last_epoch=-1)
     
     os.makedirs('metrics/train', exist_ok=True)
-    os.makedirs('model/train', exist_ok=True)
+    os.makedirs('models/train', exist_ok=True)
     
     with open('metrics/train/loss.csv', 'w') as loss_file:
         loss_file.write('epoch, loss, recon_loss, kl_loss, valid_loss, recon_valid_loss, kl_valid_loss,\n')

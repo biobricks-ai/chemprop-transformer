@@ -1,5 +1,5 @@
 import matplotlib.pyplot as plt
-
+from rdkit import Chem
 import numpy as np
 import h5py
 
@@ -16,6 +16,7 @@ def from_one_hot_array(vec):
     return int(oh[0][0])
 
 def decode_smiles_from_indexes(vec, charset):
+    charset = list(charset)
     return "".join(map(lambda x: charset[x].decode("utf-8"), vec)).strip()
 
 
@@ -93,3 +94,27 @@ def plot_metrics(metric_A, metric_B, out_path, file_name='loss'):
     plt.plot(metric_B)
     plt.savefig(f'{out_path}/{file_name}.png')
     plt.close()
+    
+def validate_smiles(generated_smiles_list):
+    validated_smiles = []
+
+    for smiles_set in generated_smiles_list:
+        for smiles in smiles_set:
+            mol = Chem.MolFromSmiles(smiles)
+            if mol is not None:
+                cannon = Chem.CanonSmiles(smiles)
+                validated_smiles.append(cannon)
+                
+    validated_smiles =  set(validated_smiles)
+    validated_smiles =  list(validated_smiles)
+
+    return validated_smiles
+
+def write_smiles_to_file(generated_smiles_list, file_path):
+    with open(file_path, 'w') as f:
+        for smiles in generated_smiles_list:
+            if type(smiles) == list:
+                for smi in smiles:
+                    f.write(str(smi) + '\n')
+            else:
+                f.write(str(smiles) + '\n')
