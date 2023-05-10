@@ -37,4 +37,20 @@ stages:
     - metrics/train
     - models/train
 
+  test:
+    cmd: python code/4_test.py
+    deps:
+    - code/4_test.py
+    - code/utils.py
+    - models/train
+    outs:
+    - metrics/test
 
+  inference:
+    cmd: python code/5_inference.py
+    deps:
+    - code/5_inference.py
+    - code/utils.py
+    - models/pretrain
+    outs:
+    - metrics/inference
