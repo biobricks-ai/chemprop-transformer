@@ -172,7 +172,7 @@ def test_model(model, test_loader, device='cpu'):
 
 if __name__ == '__main__':
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    pretrainedModelPath = 'models/train/checkpoint23epoch77model.pt'
+    pretrainedModelPath = 'models/train/LastModel.pt'
     dataPath = 'data/processed/ProcessedChemHarmony.h5'
     batch_size = 250
 

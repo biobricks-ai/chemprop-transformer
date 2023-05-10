@@ -107,6 +107,7 @@ def pretrainLoop(model, optimizer, scheduler, train_loader, valid_loader, labels
         if pre_train_loss < best_pre_train_loss and valid_loss < best_valid_loss:
             best_pre_train_loss = pre_train_loss
             torch.save(model.state_dict(), f'models/pretrain/checkpoint{checkpoint_count}epoch{epoch}pretrained_model.pt')
+            torch.save(model.state_dict(), f'models/train/LastPretrainedModel.pt')
             checkpoint_count += 1
             
         
@@ -166,7 +167,7 @@ if __name__ == '__main__':
     with open('metrics/pretrain/reconstructions.txt', 'w') as recon_file:
         recon_file.write("Reconstructions\n")
         
-    pretrainLoop(model, optimizer, scheduler, train_loader, valid_loader, labels_size, epochs=300)
+    pretrainLoop(model, optimizer, scheduler, train_loader, valid_loader, labels_size, epochs=100)
         
     
     

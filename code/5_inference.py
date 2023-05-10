@@ -39,7 +39,7 @@ def decode_random_latent_space(model, labels_size, charset, num_samples=1, num_c
 
 if __name__ == '__main__':
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    pretrainedModelPath = 'models/pretrain/checkpoint63epoch110pretrained_model.pt'
+    pretrainedModelPath = 'models/pretrain/LastPretrainedModel.pt'
     dataPath = 'data/processed/ProcessedChemHarmony.h5'
     num_samples = 10000
     num_choices = 100

@@ -123,6 +123,7 @@ def trainLoop(model, optimizer, scheduler, train_loader, valid_loader, epochs=10
             best_train_loss = train_loss
             best_valid_loss = valid_loss
             torch.save(model.state_dict(), f'models/train/checkpoint{checkpoint_count}epoch{epoch}model.pt')
+            torch.save(model.state_dict(), f'models/train/LastModel.pt')
             checkpoint_count += 1
             
         
@@ -199,4 +200,4 @@ if __name__ == '__main__':
     with open('metrics/train/reconstructions.txt', 'w') as recon_file:
         recon_file.write("Reconstructions\n")
         
-    trainLoop(model, optimizer, scheduler, train_loader, valid_loader, epochs=300)
+    trainLoop(model, optimizer, scheduler, train_loader, valid_loader, epochs=100)
