@@ -24,7 +24,20 @@ def valid_smiles(smiles):
     valid_char = set(smiles).issubset(set(charset))
     valid_length = len(smiles) <= 120
     return is_mol and valid_char and valid_length
-  
+
+def smiles_to_adjacency(smiles):
+    mol = Chem.MolFromSmiles(smiles)
+    
+    # Create an empty atom feature vector
+    atom_vector = np.zeros((num_atoms,))
+
+    for i in range(num_atoms):
+        atom = mol.GetAtomWithIdx(i)
+        
+        # This is a simple example, replace with your actual atom features
+        atom_vector[i] = atom.GetAtomicNum()
+
+      
 def smiles_to_morgan_fingerprint(smiles, radius=2, nBits=2048):
     mol = Chem.MolFromSmiles(smiles)
     
@@ -38,3 +51,6 @@ def smiles_to_morgan_fingerprint(smiles, radius=2, nBits=2048):
         fingerprint_np[bit] = 1
         
     return fingerprint_np
+
+def decode_smiles_from_indexes(vec):
+    return "".join(map(lambda x: charset[x], vec)).strip()
