@@ -110,6 +110,19 @@ def validate_smiles(generated_smiles_list):
 
     return validated_smiles
 
+def validate_stochastic_smiles(generated_smiles_list):
+    validated_smiles = []
+    for smiles in generated_smiles_list:
+        mol = Chem.MolFromSmiles(smiles)
+        if mol is not None:
+            cannon = Chem.CanonSmiles(smiles)
+            validated_smiles.append(cannon)
+                
+    validated_smiles =  set(validated_smiles)
+    validated_smiles =  list(validated_smiles)
+
+    return validated_smiles
+
 def write_smiles_to_file(generated_smiles_list, file_path):
     with open(file_path, 'w') as f:
         for smiles in generated_smiles_list:

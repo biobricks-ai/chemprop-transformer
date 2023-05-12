@@ -149,20 +149,35 @@ def test_model(model, test_loader, device='cpu'):
             for idx in range(data.size(0)):
                 original = data[idx].cpu().numpy()
                 recon = output[idx].cpu().numpy()
+                
 
                 ori_smiles = decode_smiles_from_indexes(map(from_one_hot_array, original), charset)
                 recon_smiles = decode_smiles_from_indexes(recon.argmax(axis=1), charset)
 
                 tanimoto_sim = tanimoto_similarity(ori_smiles, recon_smiles)
                 
+                output_np = recon
+                stochastic_generations = []
+                for _ in range(100):
+                    sampled_indexes = [np.random.choice(charset_size, p=output_np[i]) for i in range(output_np.shape[1])]
+                    output_smiles = decode_smiles_from_indexes(sampled_indexes, charset)
+                    stochastic_generations.append(output_smiles)
+                
+                
+                stochastic_generations = validate_stochastic_smiles(stochastic_generations)
                 total_generations += 1
                 if tanimoto_sim is not None:
                     reconstructions.append({
                         'ori_smiles': ori_smiles,
+                        'activity': activity[idx].argmax().item(),
+                        'value': value[idx].item(),
                         'recon_smiles': recon_smiles,
-                        'tanimoto_sim': tanimoto_sim
+                        'tanimoto_sim': tanimoto_sim,
+                        'stochastic_generations':list(set(stochastic_generations)),
                     })
-
+                    
+                    with open('metrics/test/reconstructions.json', 'w') as f:
+                        json.dump(reconstructions, f, indent=2)
     test_loss /= len(test_loader.dataset)
     test_recons_loss /= len(test_loader.dataset)
     test_kl_loss /= len(test_loader.dataset)
@@ -175,6 +190,8 @@ if __name__ == '__main__':
     pretrainedModelPath = 'models/train/LastModel.pt'
     dataPath = 'data/processed/ProcessedChemHarmony.h5'
     batch_size = 250
+    
+    os.makedirs('metrics/test', exist_ok=True)
 
     test_data, charset, uniqueAssays = load_test_dataset(dataPath)
     charset_size = len(charset)
@@ -197,7 +214,7 @@ if __name__ == '__main__':
     valid_generations = len(reconstructions)
     avg_tanimoto = sum([rec['tanimoto_sim'] for rec in reconstructions])/len(reconstructions)
     
-    os.makedirs('metrics/test', exist_ok=True)
+    
     with open('metrics/test/tanimoto_similarities.json', 'w') as f:
         json.dump({
             'total generations': total_generations,

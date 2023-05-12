@@ -57,7 +57,7 @@ def pretrainLoop(model, optimizer, scheduler, train_loader, valid_loader, labels
     pre_valid_recons_loss_epoch = []
     pre_valid_kl_loss_epoch = []
     
-    for epoch in tqdm(range(num_epochs)):
+    for epoch in tqdm(range(epochs)):
         model.train()
         pre_train_loss = 0
         pre_train_recons_loss = 0
@@ -107,7 +107,7 @@ def pretrainLoop(model, optimizer, scheduler, train_loader, valid_loader, labels
         if pre_train_loss < best_pre_train_loss and valid_loss < best_valid_loss:
             best_pre_train_loss = pre_train_loss
             torch.save(model.state_dict(), f'models/pretrain/checkpoint{checkpoint_count}epoch{epoch}pretrained_model.pt')
-            torch.save(model.state_dict(), f'models/train/LastPretrainedModel.pt')
+            torch.save(model.state_dict(), f'models/pretrain/LastPretrainedModel.pt')
             checkpoint_count += 1
             
         
@@ -142,7 +142,7 @@ if __name__ == '__main__':
     data_train = torch.from_numpy(data_train).float()
     data_valid = torch.from_numpy(data_valid).float()
     
-    num_epochs = 300
+    num_epochs = 100
     batch_size=250
     
     charset_size = len(charset)

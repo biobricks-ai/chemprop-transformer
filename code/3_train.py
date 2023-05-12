@@ -153,8 +153,8 @@ if __name__ == '__main__':
     
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     dataPath = 'data/processed/ProcessedChemHarmony.h5'
-    pretrainedModelPath = 'models/pretrain/checkpoint60epoch101pretrained_model.pt'
-    num_epochs = 300
+    pretrainedModelPath = 'models/pretrain/LastPretrainedModel.pt'
+    num_epochs = 100
     batch_size=250
     
     train_elements, valid_elements, charset, uniqueAssays = load_train_dataset(dataPath)
