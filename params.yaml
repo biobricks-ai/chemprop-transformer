@@ -1,4 +1,4 @@
-latentDim: 512
+latentDim: 292
 
 download:
   outFolder: data/raw/

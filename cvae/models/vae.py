@@ -61,7 +61,6 @@ class VAE(nn.Module):
         return decoded, z_mean, z_logvar
     
     def loss(self, decoded, insmi, z_mean, z_logvar):
-        insmi_t = insmi.transpose(1, 2)
         recon_loss = F.binary_cross_entropy(decoded, insmi, reduction='sum')
         kl_loss = -0.5 * torch.sum(1 + z_logvar - z_mean.pow(2) - z_logvar.exp())
             

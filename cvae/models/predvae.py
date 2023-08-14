@@ -6,90 +6,73 @@ import cvae.models.tokenizer
 
 class PredVAE(nn.Module):
     
-    def __init__(self, len_charset, nlabels, verbose=False):
+    def __init__(self, len_charset, ldim=1024):
         super(PredVAE, self).__init__()
         
-        ldim = 292
+        self.ldim = ldim
         
-        self.embed_label = nn.Embedding(nlabels, 100)
+        self.encoder_tf = nn.TransformerEncoderLayer(nhead=2,batch_first=True,d_model=58)
+        
         self.encoder = nn.Sequential(
-            nn.Conv1d(len_charset, 10, kernel_size=9),
-            nn.ReLU(),
+            nn.Conv1d(58, 1024, kernel_size=11),
+            nn.MaxPool1d(110, stride=110))
             
-            nn.Conv1d(10, 9, kernel_size=9),
-            nn.ReLU(),
-            
-            nn.Conv1d(9, 10, kernel_size=11),
-            nn.ReLU(),
-        )
         
         self.fcencoder = nn.Sequential(
-            nn.Linear(940, 940), nn.ReLU(), nn.BatchNorm1d(940),
-            nn.Linear(940, 500), nn.ReLU(), nn.BatchNorm1d(500),
+            nn.Linear(1024, 1024), nn.ReLU(), nn.BatchNorm1d(1024),
+            nn.Linear(1024, 1024), nn.ReLU(), nn.BatchNorm1d(1024),
         )
         
-        self.linear_mean = nn.Linear(600, ldim)
-        self.linear_logvar = nn.Linear(600, ldim)
+        self.linear_mean = nn.Linear(1024, ldim)
+        self.linear_logvar = nn.Linear(1024, ldim)
         
         self.dec_seq = nn.LSTM(ldim, 250, 3, batch_first=True, bidirectional=True)
         self.dec_sig = nn.Sequential(nn.Linear(500, len_charset), nn.Sigmoid())
         
-        self.valdecoder = nn.Sequential(
-            nn.Linear(ldim,ldim),nn.BatchNorm1d(ldim),nn.ReLU(),
-            nn.Linear(ldim,ldim),nn.BatchNorm1d(ldim),nn.ReLU(),
-            nn.Linear(ldim,100),nn.ReLU(),
-            nn.Linear(100,1), nn.Sigmoid())
-        
-    def encode(self, insmi, inlbl):
-        elbl = self.embed_label(inlbl)
+    def encode(self, insmi):
         esmi = self.encoder(insmi)
         esmi = esmi.view(esmi.shape[0], -1)
         esmi = self.fcencoder(esmi)
         
-        ecat = torch.cat([esmi,elbl], dim=1)
-        zmean = self.linear_mean(ecat)
-        zlogvar = self.linear_logvar(ecat)
+        zmean = self.linear_mean(esmi)
+        zlogvar = self.linear_logvar(esmi)
         return zmean, zlogvar
     
     def sample(self, zmean, zlogvar):
         epsilon = 0.1*torch.randn_like(zlogvar)
         std = torch.exp(0.5 * zlogvar)
-        z = std * epsilon + zmean
+        z = (std * epsilon) + zmean
         return z
     
     def decode(self, z):
         zrep = z.unsqueeze(1).repeat(1, 120, 1)
         dec = self.dec_seq(zrep)[0]
         dec = self.dec_sig(dec)
-        val = self.valdecoder(z)
-        return dec.permute(0,2,1), val
+        return dec.permute(0,2,1)
     
-    def forward(self, insmi, inlbl):
-        zmean, zlogvar = self.encode(insmi, inlbl)
+    def forward(self, insmi):
+        zmean, zlogvar = self.encode(insmi)
         z = self.sample(zmean, zlogvar)
-        decsmi, decval = self.decode(z)
-        return decsmi, decval, zmean, zlogvar
+        decsmi = self.decode(z)
+        return decsmi, zmean, zlogvar
     
-    def loss(self, decsmi, decval, insmi, inval, zmean, zlogvar):
-        
-        recon_loss = F.binary_cross_entropy(decsmi, insmi, reduction='sum')
+    def loss(self, decsmi, insmi, zmean, zlogvar):
+
+        decsmi = torch.clamp(decsmi, 1e-5, 1-(1e-5))
+        rl = F.binary_cross_entropy(decsmi, insmi, reduction='sum')
         
         Bkl = 1
         kl_loss = -0.5 * torch.sum(1 + zlogvar - zmean.pow(2) - zlogvar.exp())
         kl_loss = Bkl * kl_loss
         
-        Bval = 10
-        inval = inval.unsqueeze(1)
-        val_loss = Bval*F.binary_cross_entropy(decval, inval, reduction='sum')
-        
-        return recon_loss + kl_loss + val_loss, recon_loss, kl_loss, val_loss
+        return  rl + kl_loss, rl, kl_loss
     
     @staticmethod
-    def load(path = pathlib.Path("brick/pvae.pt")):
+    def load(path = "brick/pvae.pt"):
         state = torch.load(path)
-        nlbls = state['embed_label.weight'].shape[0] # number of labels
+        ldim = state['linear_mean.weight'].shape[0] # number of labels
         nchrs = state['encoder.0.weight'].shape[1] # number of characters
-        mod = PredVAE(nchrs, nlbls)
+        mod = PredVAE(nchrs, ldim)
         mod.load_state_dict(state)
         return mod
 
@@ -112,27 +95,53 @@ class PredVAE(nn.Module):
     
 #     se, sp = tp/pos, tn/neg
 #     return 100.0 * (se + sp)/2.0
+
+
+def rand(self, n):
     
-# def rand(self, n):
-#     smi = 'C1CC1N2C=C(C(=O)C3=CC(=C(C=C32)N4CCNCC4)F)C(=O)O'
-#     insmi = torch.Tensor(cvae.models.tokenizer.smiles_one_hot(smi)).unsqueeze(0).to(device)
-#     z = self.encode(insmi, torch.Tensor([0]).long().to(device))[0]
-#     z = z.repeat(100,1)
-#     z = z + 0.2*torch.randn_like(z)
-#     decsmi = self.decode(z)[0].permute(0,2,1)
-#     argmax = torch.argmax(decsmi,dim=2).cpu().numpy()
-#     osmi = [cvae.models.tokenizer.decode_smiles_from_indexes(x) for x in argmax]
-#     print("\n".join(osmi))
+    pvae = cvae.models.predvae.PredVAE.load().to(device)
+    pvae.eval()
     
-#     def isvalid(smi): 
-#         try:
-#             return cvae.models.tokenizer.valid_smiles(smi)
-#         except:
-#             return False
+    smi = 'C1CC1N2C=C(C(=O)C3=CC(=C(C=C32)N4CCNCC4)F)C(=O)O'
+    smi2 = 'CN1CCN(CC1)C2=C(C=C3C(=C2F)N(C=C(C3=O)C(=O)O)CCF)F'
+    smi3 = 'CC=CC=CC(=O)[O-].[K+]'
+    smi4 = 'CC=CC=CC(=O)[O-]'
+    insmi = torch.Tensor(cvae.models.tokenizer.smiles_one_hot(smi)).unsqueeze(0).to(device)
+    insmi2 = torch.Tensor(cvae.models.tokenizer.smiles_one_hot(smi2)).unsqueeze(0).to(device)
+    insmi3 = torch.Tensor(cvae.models.tokenizer.smiles_one_hot(smi3)).unsqueeze(0).to(device)
+    insmi4 = torch.Tensor(cvae.models.tokenizer.smiles_one_hot(smi4)).unsqueeze(0).to(device)
+    inlbl = torch.Tensor([0]).long().to(device)
+    z1 = pvae.encode(insmi, inlbl)[0] 
+    z2 = pvae.encode(insmi2, inlbl)[0]
+    z3 = pvae.encode(insmi3, inlbl)[0]
+    z4 = pvae.encode(insmi4, inlbl)[0]
+    F.cosine_similarity(z1,z2)
+    F.cosine_similarity(z1,z3)
+    F.cosine_similarity(z1,z4)
+    F.cosine_similarity(z2,z3)
+    F.cosine_similarity(z2,z4)
+    F.cosine_similarity(z3,z4)
     
-#     vsmi = [x for x in osmi if isvalid(x)]
     
-#     return decsmi
+    smi = 'C1CC1N2C=C(C(=O)C3=CC(=C(C=C32)N4CCNCC4)F)C(=O)O'
+    insmi = torch.Tensor(cvae.models.tokenizer.smiles_one_hot(smi)).unsqueeze(0).to(device)
+    z = pvae.encode(insmi, torch.Tensor([0]).long().to(device))[0]
+    z = z.repeat(100,1)
+    z = z + 0.2*torch.randn_like(z)
+    decsmi = self.decode(z)[0].permute(0,2,1)
+    argmax = torch.argmax(decsmi,dim=2).cpu().numpy()
+    osmi = [cvae.models.tokenizer.decode_smiles_from_indexes(x) for x in argmax]
+    print("\n".join(osmi))
+    
+    def isvalid(smi): 
+        try:
+            return cvae.models.tokenizer.valid_smiles(smi)
+        except:
+            return False
+    
+    vsmi = [x for x in osmi if isvalid(x)]
+    
+    return decsmi
 
 # def sample_mol(self, smiles, sample_coeff=0.1):
 #     insmi = cvae.models.tokenizer.smiles_one_hot(smiles)
