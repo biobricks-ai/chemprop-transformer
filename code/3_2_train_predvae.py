@@ -51,6 +51,7 @@ epochs, best_trn_loss, best_tst_loss = 100, np.inf, np.inf
 
 def example():
     _ = model.eval()
+    # randsmi = 'C1CC1N2C=C(C(=O)C3=CC(=C(C=C32)N4CCNCC4)F)C(=O)O'
     randsmi = smiles[np.random.randint(0,len(smiles))]
     egsmi = torch.Tensor(cvae.models.tokenizer.smiles_one_hot(randsmi)).to(device)
     egsmi = egsmi.unsqueeze(0)

@@ -1,0 +1,9 @@
+flask
+psycopg
+boto3
+reportlab
+seaborn
+matplotlib
+faiss-gpu
+pandas
+gunicorn

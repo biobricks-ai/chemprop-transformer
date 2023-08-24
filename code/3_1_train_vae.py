@@ -28,22 +28,6 @@ data = pd.read_csv(utils.res(params["rawDataPath"]))[['smiles']]
 chunksize = 320
 data_iterator = pd.read_csv(utils.res(params["rawDataPath"]), usecols=['smiles'], chunksize=chunksize)
 
-# tmpdir = pathlib.Path("staging/smiles")
-# if tmpdir.exists():
-#     shutil.rmtree(tmpdir)    
-
-# tmpdir.mkdir(parents=True, exist_ok=True)
-
-# i,chunk = next(enumerate(data_iterator))
-# for i,chunk in tqdm(enumerate(data_iterator), total=len(data) // chunksize):
-#     valid = lambda x: len(x) < 120 and set(x).issubset(tokenizer.charset)
-#     valid_smiles = chunk['smiles'].apply(valid)
-#     chunk = chunk[valid_smiles]
-    
-#     tokens = chunk['smiles'].apply(tokenizer.smiles_one_hot)
-#     tensor = torch.stack([torch.from_numpy(arr) for arr in tokens])
-#     path = tmpdir / f"chunk{i}.pt"
-#     torch.save(tensor, path)
 
 class ChunkedTensorDataset(Dataset):
     
