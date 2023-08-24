@@ -1,4 +1,6 @@
 # docker build -t insilica/chemsim .
+# docker run -p 6515:6515 -v .:/chemsim --rm --gpus all -it --name chemsim insilica/chemsim
+# curl "http://localhost:6515/predict?inchi=InChI=1S/C9H8O4/c1-6(10)13-8-5-3-2-4-7(8)9(11)12/h2-5H,1H3,(H,11,12)" 
 FROM nvidia/cuda:11.7.1-devel-ubuntu20.04
 
 # Set a noninteractive frontend to prevent prompts
@@ -29,15 +31,16 @@ RUN pip install \
 RUN apt-get install -y libxrender1
 
 # Install the requirements
-COPY flask-cvae/requirements.txt requirements.txt
+COPY flask_cvae/requirements.txt requirements.txt
 RUN pip install --trusted-host pypi.python.org -r requirements.txt
 
 # Expose the port the app runs on
 EXPOSE 6515
 
 # Command to run the application
-ENV FLASK_APP=flask-cvae.app
+ENV FLASK_APP=flask_cvae.app
 ENV ROOT_URL=http://localhost:6515
 
 # Start the container with a bash shell
-CMD ["gunicorn", "-b", "0.0.0.0:6515", "flask-cvae.app:app"]
+WORKDIR /chemsim
+CMD ["gunicorn", "-b", "0.0.0.0:6515", "--timeout", "240", "--graceful-timeout", "240", "--workers", "1", "flask_cvae.app:app"]
