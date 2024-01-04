@@ -24,3 +24,4 @@ pip install rdkit
 pip install matplotlib
 pip install dask
 pip install "dask[distributed]"
+pip install selfies==2.1.1

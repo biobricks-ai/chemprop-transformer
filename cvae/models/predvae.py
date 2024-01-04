@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import pathlib
 import cvae.models.tokenizer
 
 class PredVAE(nn.Module):
@@ -11,10 +10,11 @@ class PredVAE(nn.Module):
         
         self.ldim = ldim
         
-        self.encoder_tf = nn.TransformerEncoderLayer(nhead=2,batch_first=True,d_model=58)
+        self.embedding_layer = nn.Embedding(len_charset, 10)
+        self.encoder_tf = nn.TransformerEncoderLayer(nhead=2,batch_first=True,d_model=10) # BATCH, SEQLEN, 58
         
         self.encoder = nn.Sequential(
-            nn.Conv1d(58, 1024, kernel_size=11),
+            nn.Conv1d(in_channels=10, out_channels=1024, kernel_size=11),
             nn.MaxPool1d(110, stride=110))
             
         
@@ -29,8 +29,9 @@ class PredVAE(nn.Module):
         self.dec_seq = nn.LSTM(ldim, 250, 3, batch_first=True, bidirectional=True)
         self.dec_sig = nn.Sequential(nn.Linear(500, len_charset), nn.Sigmoid())
         
-    def encode(self, insmi):
-        esmi = self.encoder(insmi)
+    def encode(self, smiles_embedding):
+        esmi = self.encoder_tf(smiles_embedding)
+        esmi = self.encoder(esmi.transpose(1,2))
         esmi = esmi.view(esmi.shape[0], -1)
         esmi = self.fcencoder(esmi)
         
@@ -48,21 +49,24 @@ class PredVAE(nn.Module):
         zrep = z.unsqueeze(1).repeat(1, 120, 1)
         dec = self.dec_seq(zrep)[0]
         dec = self.dec_sig(dec)
-        return dec.permute(0,2,1)
+        return dec
     
     def forward(self, insmi):
-        zmean, zlogvar = self.encode(insmi)
+        smiles_embedding = self.embedding_layer(insmi)
+        zmean, zlogvar = self.encode(smiles_embedding)
         z = self.sample(zmean, zlogvar)
         decsmi = self.decode(z)
         return decsmi, zmean, zlogvar
     
-    def loss(self, decsmi, insmi, zmean, zlogvar):
+    def loss(self, decsmi, insmi, z_mean, z_logvar):
+        
+        insmi_one_hot = F.one_hot(insmi, num_classes=decsmi.size(2)).to(dtype=torch.float32)
 
         decsmi = torch.clamp(decsmi, 1e-5, 1-(1e-5))
-        rl = F.binary_cross_entropy(decsmi, insmi, reduction='sum')
+        rl = F.binary_cross_entropy(decsmi, insmi_one_hot, reduction='sum')
         
         Bkl = 1
-        kl_loss = -0.5 * torch.sum(1 + zlogvar - zmean.pow(2) - zlogvar.exp())
+        kl_loss = -0.5 * torch.sum(1 + z_logvar - z_mean.pow(2) - z_logvar.exp())
         kl_loss = Bkl * kl_loss
         
         return  rl + kl_loss, rl, kl_loss

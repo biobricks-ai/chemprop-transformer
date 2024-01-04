@@ -1,18 +1,26 @@
 import dvc.api, numpy as np, torch, os
 from pathlib import Path
 import torch.nn.functional as F
+import yaml
 from tqdm import tqdm
+import pathlib, shutil
+import threading
 
+def mk_empty_directory(path, overwrite=False):
+    path = pathlib.Path(path)
+    if path.exists() and overwrite:
+        shutil.rmtree(path)
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+    
 def rootdir(p=Path(os.getcwd())):
     isroot = (p / 'dvc.yaml').exists()
     return p if(isroot) else rootdir(p.parent) if p.parent != p else None
 
 def loadparams():
-    cwd = os.getcwd()
-    os.chdir(rootdir())
-    res = dvc.api.params_show()
-    os.chdir(cwd)
-    return res
+    with open('params.yaml','r') as f:
+        params = yaml.load(f, Loader=yaml.FullLoader)
+    return params
 
 def res(path):
     "Returns the path relative to the root directory"
