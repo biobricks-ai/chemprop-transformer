@@ -3,30 +3,21 @@ library(readr)
 library(dplyr)
 library(scales) # For additional scale functions
 
-# Read the data
-data <- read_tsv('metrics/vaeloss.tsv') %>%
-  mutate(iteration = row_number()) %>%
-  select(epoch, iteration, loss, recloss, kloss) |>
-  arrange(iteration) |>
-  filter(iteration > 5) # skip first 5 high loss iterations
+# Read the first three columns of the metrics file
+data <- read_tsv('metrics/multitask_loss.tsv', col_names = c('type', 'batch', 'loss'), skip =1) 
+data <- data |> mutate(batch = row_number()) |> mutate()
+data <- data |> filter(batch> 20000)
 
-# Add a column indicating the start of a new epoch
-data <- data %>%
-  group_by(epoch) %>%
-  mutate(start_of_epoch = (iteration == min(iteration))) %>%
-  ungroup()
 
+data |> filter(type == "eval") |> pull(loss)
+data |> filter(type == "eval") |> pull(loss) |> min()
+# data |> filter(type == "scheduler")
+
+data <- data |> filter(type != "train")
 # Create the plot with a black theme and log scale for the y-axis
-plot <- ggplot(data, aes(x = iteration)) +
-  geom_line(aes(y = loss, color = "Total Loss"), size = 1) +
-  geom_point(aes(y = loss, color = "Total Loss"), size = 2) +
-  geom_line(aes(y = recloss, color = "Reconstruction Loss"), size = 1) +
-  geom_point(aes(y = recloss, color = "Reconstruction Loss"), size = 2) +
-  geom_line(aes(y = kloss, color = "KL Loss"), size = 1) +
-  geom_point(aes(y = kloss, color = "KL Loss"), size = 2) +
-  geom_vline(data = data %>% filter(start_of_epoch), aes(xintercept = iteration), color = "white", linetype = "dotted") +
-  scale_color_manual(values = c("Total Loss" = "#1f77b4", "Reconstruction Loss" = "#d62728", "KL Loss" = "#2ca02c")) +
-  scale_y_log10(labels = scales::comma) + # Log scale for y-axis
+plot <- ggplot(data, aes(x = batch, y=loss, col=type)) + 
+  geom_point(aes(color = type),alpha=0.8, size=1) +
+  geom_smooth(size=2, alpha=0.5, col="red") +
   labs(x = 'Iteration', y = 'Loss', title = 'VAE Losses Over Iterations', color = "Metric") +
   theme_minimal(base_size = 16) +
   theme(
@@ -41,7 +32,8 @@ plot <- ggplot(data, aes(x = iteration)) +
     axis.text = element_text(color = "white"),
     axis.line = element_line(color = "white")
   ) +
-  guides(color = guide_legend(title = "Metrics"))
+  guides(color = guide_legend(title = "Metrics")) + 
+  facet_wrap(~type, ncol = 3, scales = "free_y") 
 
 # Create the directory and save the plot
 dir.create('notebook/plots', recursive = TRUE, showWarnings = FALSE)

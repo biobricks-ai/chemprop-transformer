@@ -6,6 +6,10 @@ from tqdm import tqdm
 import pathlib, shutil
 import threading
 
+def write_path(path, text, mode='a'):
+    with open(path, mode) as f:
+        _ = f.write(text)
+        
 def mk_empty_directory(path, overwrite=False):
     path = pathlib.Path(path)
     if path.exists() and overwrite:

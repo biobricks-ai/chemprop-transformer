@@ -49,30 +49,41 @@ build_partition_tensors(test, outdir / 'test.pt')
 build_partition_tensors(holdout, outdir / 'holdout.pt')
 
 # BUILD MULTITASKSUPERVISED DATA SET =============================================
-data = spark.read.parquet("data/processed/activities.parquet").select('selfies','assay_index','encoded_selfies', 'value')
-    
-selfies_tok = cvae.tokenizer.selfies_tokenizer.SelfiesTokenizer().load('data/processed/selfies_tokenizer.json')
-num_assays = int(data.agg(F.max('assay_index')).collect()[0][0] + 1)
-num_values = int(data.agg(F.max('value')).collect()[0][0] + 1) # TODO this assumes an index identity for values
-tokenizer = cvae.tokenizer.SelfiesPropertyValTokenizer(selfies_tok, num_assays, num_values)
+def build_multitask_supervised_data(spark):
+    data = spark.read.parquet("data/processed/activities.parquet").select('selfies','assay_index','encoded_selfies', 'value')
 
-savepath = cvae.utils.mk_empty_directory('data/processed/selfies_property_val_tokenizer', overwrite=True)
-tokenizer.save(savepath)
+    # exclude any examples in data where a given selfies has distinct values for a given assay
+    data = data \
+        .groupby('encoded_selfies', 'assay_index') \
+        .agg(F.collect_set('value').alias('values')) \
+        .filter(F.size('values') == 1) \
+        .select('encoded_selfies', 'assay_index', F.element_at('values', 1).alias('value'))
+        
+        
+    selfies_tok = cvae.tokenizer.selfies_tokenizer.SelfiesTokenizer().load('data/processed/selfies_tokenizer.json')
+    num_assays = int(data.agg(F.max('assay_index')).collect()[0][0] + 1)
+    num_values = int(data.agg(F.max('value')).collect()[0][0] + 1) # TODO this assumes an index identity for values
+    tokenizer = cvae.tokenizer.SelfiesPropertyValTokenizer(selfies_tok, num_assays, num_values)
 
-def create_tensors(partition, outdir):
-    partition = list(partition)
-    selfies = torch.stack([torch.LongTensor(r.encoded_selfies) for r in partition])
-    assay_vals = [tokenizer.tokenize_assay_values(r.assay_val_pairs) for r in partition]
-    assay_vals = torch.nn.utils.rnn.pad_sequence(assay_vals, batch_first=True, padding_value=tokenizer.pad_idx)
-    torch.save({'selfies': selfies, 'assay_vals': assay_vals}, outdir / f"{uuid.uuid4()}.pt")
+    savepath = cvae.utils.mk_empty_directory('data/processed/selfies_property_val_tokenizer', overwrite=True)
+    tokenizer.save(savepath)
 
-gdata = data \
-    .select("encoded_selfies", "assay_index", "value").distinct() \
-    .groupby("encoded_selfies").agg(F.collect_list(F.struct("assay_index", "value")).alias("assay_val_pairs"))
-    
-trn, tst, hld = gdata.randomSplit([0.8, 0.1, 0.1], seed=37)
+    def create_tensors(partition, outdir):
+        partition = list(partition)
+        selfies = torch.stack([torch.LongTensor(r.encoded_selfies) for r in partition])
+        assay_vals = [tokenizer.tokenize_assay_values(r.assay_val_pairs) for r in partition]
+        assay_vals = torch.nn.utils.rnn.pad_sequence(assay_vals, batch_first=True, padding_value=tokenizer.pad_idx)
+        torch.save({'selfies': selfies, 'assay_vals': assay_vals}, outdir / f"{uuid.uuid4()}.pt")
 
-# df, path = trn, 'trn'
-for df, path in zip([trn, tst, hld], ['trn', 'tst', 'hld']):
-    cvae.utils.mk_empty_directory(f'data/processed/multitask_tensors/{path}', overwrite=True)
-    df.foreachPartition(lambda partition: create_tensors(partition, pathlib.Path(f'data/processed/multitask_tensors/{path}')))
+    gdata = data \
+        .select("encoded_selfies", "assay_index", "value").distinct() \
+        .groupby("encoded_selfies").agg(F.collect_list(F.struct("assay_index", "value")).alias("assay_val_pairs"))
+        
+    trn, tst, hld = gdata.randomSplit([0.8, 0.1, 0.1], seed=37)
+
+    # df, path = trn, 'trn'
+    for df, path in zip([trn, tst, hld], ['trn', 'tst', 'hld']):
+        cvae.utils.mk_empty_directory(f'data/processed/multitask_tensors/{path}', overwrite=True)
+        df.foreachPartition(lambda partition: create_tensors(partition, pathlib.Path(f'data/processed/multitask_tensors/{path}')))
+        
+build_multitask_supervised_data(spark)

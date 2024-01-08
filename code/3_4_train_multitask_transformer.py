@@ -1,6 +1,6 @@
 import importlib, inspect, itertools
 import pathlib, signal, random, numpy as np, tqdm, sys
-import cvae.models, cvae.models, cvae.tokenizer, cvae.utils
+import cvae.models, cvae.models, cvae.tokenizer, cvae.utils as utils
 import torch, torch.utils.data, torch.nn.functional as F, torch.optim as optim
 
 DEVICE = torch.device(f'cuda:0')
@@ -66,82 +66,86 @@ class Trainer():
     def __init__(self, model):
         self.model = model
         self.optimizer = optim.Adam(model.parameters(),lr=1e-3)
-        self.lossfn = cvae.models.multitask_transformer.MultitaskTransformer.loss
+        self.lossfn = cvae.models.multitask_transformer.MultitaskTransformer.lossfn()
         
         self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, patience=21, factor=0.9, verbose=True, min_lr=1e-6)
         self.scheduler_loss = []
         self.scheduler_loss_interval = 100
         
-        self.evaluation_interval = 10000
+        self.evaluation_interval = 1000
         self.savepath = "brick/mtransform2"
         self.test_losses = [np.inf]
         self.best_test_loss = np.inf
-        self.metrics_path = pathlib.Path("metrics/vaeloss.tsv")
+        self.metrics_path = pathlib.Path("metrics/multitask_loss.tsv")
         
-    def _evaluate_and_save(self, valdl):
-        model.eval()
-        epochloss = 0
+    def _evaluation_loss(self, valdl):
+        self.model.eval()
+        epochloss = []
         for _, (inp, out) in tqdm.tqdm(enumerate(valdl), total=len(valdl)):
             if signal_received: return
             inp, out = inp.to(DEVICE), out.to(DEVICE)
             inp[:,122:240:2] = tokenizer.pad_idx
-            pred, z, zvar = self.model(inp)
-            loss, rec_loss, kl_loss = self.lossfn(pred.permute(0,2,1), out, z, zvar, tokenizer.pad_idx)
-            epochloss += loss.item()
+            pred = self.model(inp)
+            loss = self.lossfn(pred.permute(0,2,1), out)
+            epochloss.append(loss.item())
         
-        self.test_losses.append(epochloss)
-        if epochloss < self.best_test_loss:
-            self.best_test_loss = epochloss
-            model.module.save(cvae.utils.mk_empty_directory(self.savepath, overwrite=True))
-    
+        return np.mean(epochloss)
+                
     def _epochs_since_improvement(self):
         return len(self.test_losses) - np.argmin(self.test_losses)
     
     def _train_batch(self, inp, out):
-        self.optimizer.zero_grad()    
-        inp[:, 122:240:2] = tokenizer.pad_idx  # Mask assay values
+        self.model.train()
+        self.optimizer.zero_grad()
+        
+        # Mask assay values
+        # inp[:, 122:240:2] = tokenizer.pad_idx  
+        
+        # Randomly mask 50% of assay values
+        mask = torch.rand(inp[:, 122:240:2].shape).to(DEVICE) < 0.5
+        inp[:, 122:240:2] = inp[:, 122:240:2].masked_fill(mask, tokenizer.pad_idx)
             
         # outputs and loss
-        pred, z, zvar = self.model(inp)
-        loss, rec_loss, kl_loss = self.lossfn(pred.permute(0,2,1), out, z, zvar, tokenizer.pad_idx)
+        pred = self.model(inp)
+        loss = self.lossfn(pred.permute(0,2,1), out)
         
         # update model
         loss.backward()
         self.optimizer.step()
             
-        return {"loss": loss.item(), "rec_loss": rec_loss.item(), "kl_loss": kl_loss.item()}
+        return loss.item()
 
-    def _write_metrics(self, epoch, mean_l, mean_rl, mean_kl):
-        with open(self.metrics_path, "a") as f:
-            _ = f.write(f"{epoch}\t{mean_l}\t{mean_rl}\t{mean_kl}\n")
-            
-    def train(self, trn_dl, val_dl):
-        self.metrics_path.write_text("epoch\tloss\trecloss\tkloss\n")
-        trn_dl = itertools.cycle(enumerate(trn_dl))
-        trn_loss = {"loss": [], "rec_loss": [], "kl_loss": []}
+    def train(self, trndl, valdl):
+        utils.write_path(self.metrics_path,"epoch\tloss\tlearning_rate\n", mode='w')
+        it_trndl = itertools.cycle(enumerate(trndl))
+        trn_loss = []
         epoch = 0
         
-        while self._epochs_since_improvement() < 21:
+        while self._epochs_since_improvement() < 10:
             if signal_received: return
             
-            i, (inp, out) = next(trn_dl)
-            lossdict = self._train_batch(inp.to(DEVICE), out.to(DEVICE))
-            for k in trn_loss:
-                trn_loss[k].append(lossdict[k])
-
+            i, (inp, out) = next(it_trndl)
+            loss = self._train_batch(inp.to(DEVICE), out.to(DEVICE))
+            trn_loss.append(loss)
+            utils.write_path(self.metrics_path,f"train\t{i}\t{loss}\t{self.optimizer.param_groups[0]['lr']:.4f}\n")
+            
             # SCHEDULER UPDATE 
             if (i + 1) % self.scheduler_loss_interval == 0:
-                mean_l, mean_rl, mean_kl = [np.mean(trn_loss[k]) for k in ["loss", "rec_loss", "kl_loss"]]
-                self.scheduler.step(mean_l)
-                self._write_metrics(epoch, mean_l, mean_rl, mean_kl)
-                print(f"epoch: {epoch}\titer: {(i+1) // self.scheduler_loss_interval}\tloss:{mean_l:.4f}\trecloss:{mean_rl:.4f}\tkl:{mean_kl:.4f}\tlr:{self.optimizer.param_groups[0]['lr']}")
-                trn_loss = {"loss": [], "rec_loss": [], "kl_loss": []}
+                mean_loss = np.mean(trn_loss)
+                self.scheduler.step(mean_loss)
+                utils.write_path(self.metrics_path,f"scheduler\t{i}\t{mean_loss}\t{self.optimizer.param_groups[0]['lr']:.4f}\n")
+                trn_loss = []
             
             # EVALUATION UPDATE
             if (i + 1) % self.evaluation_interval == 0:
-                print('evaluating...')
                 epoch += 1
-                self._evaluate_and_save(val_dl)
+                eval_loss = self._evaluation_loss(valdl)
+                self.test_losses.append(eval_loss)
+                if eval_loss < self.best_test_loss:
+                    self.best_test_loss = eval_loss
+                    self.model.module.save(self.savepath)
+                
+                utils.write_path(self.metrics_path,f"eval\t{i}\t{self.test_losses[-1]}\n")
                 print(f"epoch: {epoch}\t eval_loss: {self.best_test_loss:.4f}")
         
         
@@ -154,6 +158,8 @@ trndl = torch.utils.data.DataLoader(trnds, batch_size=128, shuffle=False, prefet
 valds = SequenceShiftDataset("data/processed/multitask_tensors/tst")
 valdl = torch.utils.data.DataLoader(valds, batch_size=128, shuffle=False, prefetch_factor=100, num_workers=20)
 trainer = Trainer(model)
+
+signal_received = False
 trainer.train(trndl, valdl)
 
 # EVALUATE ===================================================================================================
@@ -173,6 +179,17 @@ def extract_ordered_values(tensor):
     index_values = {v: k for k, v in value_indexes.items()}
     return [index_values[x.item()] for x in tensor if x.item() in value_indexes.values()]
 
+def extract_assay_value_dict(tensor):
+    assay_indexes = torch.LongTensor(list(tokenizer.assay_indexes().values())).to(DEVICE)
+    # torch where tensor value is in assay_indexes
+    indexes = torch.isin(tensor, assay_indexes)
+    # shift index one to right to get value indexes
+    value_indexes = torch.where(indexes)[0] + 1
+    tensor_assays = tensor[indexes].cpu().numpy()
+    tensor_values = tensor[value_indexes].cpu().numpy()
+    # zip together to get assay:value pairs
+    return dict(zip(tensor_assays, tensor_values))
+
 def extract_probabilities_of_one(out, probs):
     # get the index of each assay token in the out tensor
     npout = out.cpu().numpy()
@@ -190,25 +207,33 @@ def evaluate(model):
     tst = SequenceShiftDataset("data/processed/multitask_tensors/tst")
     
     out_df = pd.DataFrame()
-    for i in tqdm.tqdm(range(10000)):
+    for i in tqdm.tqdm(range(1000)):
         inp, out = tst[i]
+        inp, out = inp.to(DEVICE), out.to(DEVICE)
         
         # mask all values in the input
-        inp[122:240:2] = tokenizer.pad_idx
-        
-        probs = torch.softmax(model(inp.unsqueeze(0).to(DEVICE), temp=0.0)[0][0], dim=1).detach()
+        # inp[122:240:2] = tokenizer.pad_idx
+                
+        # Randomly mask 50% of assay values
+        mask = torch.rand(inp[122:240:2].shape).to(DEVICE) < 0.5
+        mask_inp = inp
+        mask_inp[122:240:2] = inp[122:240:2].masked_fill(mask, tokenizer.pad_idx)
+            
+        pred = model(mask_inp.unsqueeze(0))
+        probs = torch.softmax(pred[0],dim=1).detach()
         
         probs = extract_probabilities_of_one(out, probs).cpu().numpy()
         assays = extract_ordered_assays(out)
         values = extract_ordered_values(out)
+        is_masked = [x == tokenizer.PAD_IDX for x in list(extract_assay_value_dict(mask_inp).values())]
         
-        i_out_df = pd.DataFrame({"i":i, "assay": assays, "value": values, "prob_1": probs })
+        i_out_df = pd.DataFrame({"i":i, "assay": assays, "value": values, "is_masked": is_masked, "prob_1": probs })
         out_df = pd.concat([out_df, i_out_df])
     
     # out_df has columns: i, assay, value, prob_0
     # build AUC, sensitivity, specificity, accuracy, balanced_accuracy
-    
-    y_true, y_pred = out_df['value'].values, out_df['prob_1'].values
+    evaldf = out_df[out_df['is_masked'] == True]
+    y_true, y_pred = evaldf['value'].values, evaldf['prob_1'].values
     
     auc = roc_auc_score(y_true, y_pred)
     acc = accuracy_score(y_true, y_pred > 0.5)

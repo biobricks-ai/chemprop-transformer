@@ -48,7 +48,7 @@ def generate_static_mask(selfies_sz: int, assayval_sz:int) -> torch.Tensor:
     
 class MultitaskTransformer(nn.Module):
     
-    def __init__(self, tokenizer, selfies_sz=120, hdim=256, nhead=32, num_layers=8, dim_feedforward=500, dropout_rate=0.1):
+    def __init__(self, tokenizer, selfies_sz=120, hdim=512, nhead=32, num_layers=8, dim_feedforward=1024, dropout_rate=0.1):
         super().__init__()
         
         self.selfies_sz = selfies_sz
@@ -95,14 +95,15 @@ class MultitaskTransformer(nn.Module):
         return logits
     
     @staticmethod
-    def loss(decsmi, insmi, pad_idx):
-        criterion = nn.CrossEntropyLoss(reduction='mean', ignore_index=pad_idx)
-        return  criterion(decsmi, insmi)
+    def lossfn(ignore_index = None):
+        return nn.CrossEntropyLoss(reduction='mean', ignore_index=ignore_index) if ignore_index is not None else nn.CrossEntropyLoss(reduction='mean')
+
     
     def save(self, path):
         if not isinstance(path, pathlib.Path):
             path = pathlib.Path(path)
         
+        cvae.utils.mk_empty_directory(path, overwrite=True)
         cvae.utils.mk_empty_directory(path / "spvt_tokenizer", overwrite=True)
         self.tokenizer.save(path / "spvt_tokenizer")
         torch.save(self.state_dict(), path / "mtransformer.pt")

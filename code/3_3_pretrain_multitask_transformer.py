@@ -44,25 +44,18 @@ importlib.reload(cvae.models.multitask_transformer)
 model = cvae.models.multitask_transformer.MultitaskTransformer(tokenizer).to(DEVICE)
 model = torch.nn.DataParallel(model)
 optimizer = optim.AdamW(model.parameters(), lr=1e-3, weight_decay=0.01)
-scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=21, factor=0.9, verbose=True, min_lr=1e-6)
+scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=5, factor=0.9, verbose=True, min_lr=1e-6)
 
 
-writepath = pathlib.Path("metrics/vaeloss.tsv")
-_ = writepath.write_text("epoch\tloss\trecloss\tkloss\n")
+writepath = pathlib.Path("metrics/pretrain_multitask_transformer.tsv")
+_ = writepath.write_text("batch\tepochs_since_best\tloss\n")
 
-epochs, best_trn_loss, best_tst_loss = 100, np.inf, np.inf
+epochs, best_trn_loss = 100, np.inf
+# LOSS GETS DOWN TO 0.05 when ignoring pad index
 while scheduler.num_bad_epochs < 21:
     
-    # eloss, erec_loss, ekl_loss = evaluate()
-    enum = enumerate(selfies_dl)
-    pbar1 = tqdm.tqdm(enum, total=len(selfies_dl), unit="batch")
-    
-    _ = model.train()
-    
-    # i, (insmi, output) = next(enum)
-    
-    schedulerloss = []
-    for _,(insmi,output) in pbar1:
+    for _,(insmi,output) in tqdm.tqdm(enumerate(selfies_dl), total=len(selfies_dl), unit="batch"):
+        if signal_received: break
         
         insmi, output = insmi.squeeze(0), output.squeeze(0) # [VERY LARGE, 120] and [VERY LARGE, 120]
         batch_size = 128 # define your batch size
@@ -70,6 +63,7 @@ while scheduler.num_bad_epochs < 21:
         pbar2 = tqdm.tqdm(range(0, insmi.size(0), batch_size), total=insmi.size(0)//batch_size, unit="batch")
         batchloss = []
         for i in pbar2:
+            if signal_received: break
             
             optimizer.zero_grad()
             _ = model.train()
@@ -82,8 +76,8 @@ while scheduler.num_bad_epochs < 21:
             
             # outputs and loss
             decoded = model(insmi_batch)
-            lossfn = cvae.models.multitask_transformer.MultitaskTransformer.loss
-            loss = lossfn(decoded.permute(0,2,1), output_batch, tokenizer.PAD_IDX)
+            lossfn = cvae.models.multitask_transformer.MultitaskTransformer.lossfn()
+            loss = lossfn(decoded.permute(0,2,1), output_batch)
             
             # update model
             loss.backward()
@@ -105,40 +99,37 @@ while scheduler.num_bad_epochs < 21:
                 scheduler.step(mean_bl)
                 randsample = insmi[random.randint(0,insmi.size(0)-1)]
                 
-                sample_str = ''.join(tokenizer.indexes_to_symbols(randsample.cpu().numpy()))
-                tqdm.tqdm.write(f"input: {sample_str.replace('<pad>', '').replace('<sos>','').replace('<eos>','')}")
-                
+                sample_str = ''.join(tokenizer.indexes_to_symbols(randsample.cpu().numpy())).replace('<sos>','')
                 output_idx = torch.argmax(model(randsample.unsqueeze(0)), dim=2)[0].detach().cpu().numpy()
                 output_str = ''.join(tokenizer.indexes_to_symbols(output_idx))
-                tqdm.tqdm.write(f"teach: {output_str.replace('<pad>', '').replace('<eos>','')}")
-                tqdm.tqdm.write(f"epoch: {epoch}\tbatch:{i // batch_size}\tloss:{mean_bl:.4f}\tlr:{optimizer.param_groups[0]['lr']}\n")
-                sys.stdout.flush()
+                
+                # write input and output characters in 40 character batches
+                for si in range(0, len(sample_str), 120):
+                    tqdm.tqdm.write(f"input: {sample_str[si:si+120]}")                
+                    tqdm.tqdm.write(f"teach: {output_str[si:si+120]}")
+                    tqdm.tqdm.write(f"-")
+                    
+                tqdm.tqdm.write(f"bad_epochs: {scheduler.num_bad_epochs} loss:{mean_bl:.4f}\tlr:{optimizer.param_groups[0]['lr']:.4f}\n")
+                
                 
                 
                 with open(writepath, "a") as f:
-                    _ = f.write(f"{epoch}\t{mean_bl}")
+                    _ = f.write(f"{i}\t{scheduler.num_bad_epochs}\t{mean_bl}\n")
                 
                 batchloss = []
-            
-            if signal_received:
-                break
+        
+                if mean_bl < best_trn_loss:
+                    tqdm.tqdm.write('saving!\n')
+                    best_trn_loss = mean_bl
+                    path = pathlib.Path("brick/mtransform1")
+                    cvae.utils.mk_empty_directory(path, overwrite=True)
+                    model.module.save(path)
                 
-        if signal_received:
-            break
-    
+                sys.stdout.flush()
+
     if signal_received:
             signal_received = False
             break
         
-    _ = model.eval()
-    # example()
 
-    if epochloss < best_trn_loss:
-        print('saving!')
-        best_trn_loss = epochloss
-        # best_tst_loss = eloss
-        path = pathlib.Path("brick/mtransform1")
-        cvae.utils.mk_empty_directory(path, overwrite=True)
-        model.module.save(path)
-        # torch.save(model.state_dict(), path) 
 
