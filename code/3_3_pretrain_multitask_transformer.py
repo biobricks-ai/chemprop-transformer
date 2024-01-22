@@ -111,8 +111,6 @@ while scheduler.num_bad_epochs < 21:
                     
                 tqdm.tqdm.write(f"bad_epochs: {scheduler.num_bad_epochs} loss:{mean_bl:.4f}\tlr:{optimizer.param_groups[0]['lr']:.4f}\n")
                 
-                
-                
                 with open(writepath, "a") as f:
                     _ = f.write(f"{i}\t{scheduler.num_bad_epochs}\t{mean_bl}\n")
                 
