@@ -30,6 +30,11 @@ class SelfiesTokenizer:
 
         return self
 
+    def selfies_to_indices(self, selfies_string):
+        symbols = [self.SOS_TOKEN] + list(sf.split_selfies(selfies_string)) + [self.END_TOKEN]
+        indices = [self.symbol_to_index.get(symbol, self.symbol_to_index[self.PAD_TOKEN]) for symbol in symbols]
+        return indices
+            
     def transform(self, dataset, selfies_column, new_column, pad_length=120):
         # Function to convert selfies string to indices and pad
         def selfies_to_indices(selfies_string):
