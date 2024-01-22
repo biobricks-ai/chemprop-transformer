@@ -78,11 +78,6 @@ ORDER BY strength DESC
 
 df = pd.read_sql_query(query, conn)
 
-a = df[['data','category','reason','strength']][df['category'] == 'endocrine disruption']
-# iterate over a printing a human readable version of the row
-for row in a.iterrows():
-    print(f"{row[1]['data']} is an {row[1]['category']} because {row[1]['reason']} with strength {row[1]['strength']}")
-
 assert df['data'].isnull().sum() == 0, "Null values found in 'data' column"
 assert df['reason'].isnull().sum() == 0, "Null values found in 'reason' column"
 

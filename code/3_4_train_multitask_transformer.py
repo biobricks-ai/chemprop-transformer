@@ -29,8 +29,28 @@ class Trainer():
         self.savepath = "brick/mtransform2"
         self.test_losses = [np.inf]
         self.best_test_loss = np.inf
-        self.metrics_path = pathlib.Path("metrics/multitask_loss.tsv")
-        
+    
+    def set_trn_iterator(self, iterator):
+        self.trn_iterator = iterator
+        return self
+    
+    def set_mask_percent(self, mask_percent):
+        self.mask_percent = mask_percent
+        return self
+    
+    def set_validation_dataloader(self, valdl):
+        self.valdl = valdl
+        return self
+    
+    def set_metrics_file(self, metrics_path, overwrite=False):
+        self.metrics_path = metrics_path
+        if overwrite: utils.write_path(self.metrics_path,"epoch\tloss\tlearning_rate\n", mode='w')
+        return self
+    
+    def set_values_mask_flag(self, bool_flag):
+        self.values_mask = bool_flag
+        return self
+    
     def _evaluation_loss(self, valdl):
         self.model.eval()
         epochloss = []
@@ -59,39 +79,41 @@ class Trainer():
         self.optimizer.step()
             
         return loss.item()
-
-    def train(self, trnds, valds, mask_percent=0.0, batch_size=2048, max_epochs = np.inf):
+    
+    def start(self):
         global signal_received
         signal_received = False
         
-        utils.write_path(self.metrics_path,"epoch\tloss\tlearning_rate\n", mode='w')
-        trndl = torch.utils.data.DataLoader(trnds, batch_size=batch_size, shuffle=True, prefetch_factor=100, num_workers=20)
-        valdl = torch.utils.data.DataLoader(valds, batch_size=batch_size, shuffle=True, prefetch_factor=100, num_workers=20)
-        iterator = itertools.cycle(enumerate(trndl))
-        self.start(iterator, batch_size, mask_percent=0.5, valdl=valdl)
-    
-    def start(self, iterator, batch_size, mask_percent, valdl, trn_loss=[], epoch=0):
-        global signal_received
-        signal_received = False
+        i, (inp, teach, out) = next(self.trn_iterator)
+        batch_size = inp.size(0)
+        
         # evaluate twice per epoch
         evaluation_interval = ((len(trnds)-1) // batch_size) // 2
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         
+        value_indexes = torch.LongTensor(list(tokenizer.value_indexes().values())).to(DEVICE)
+        
+        epoch = 0
+        trn_loss = []
+        
         while self._epochs_since_improvement() < 4000:
             if signal_received: return
             
-            i, (inp, teach, out) = next(iterator)
+            i, (inp, teach, out) = next(self.trn_iterator)
             inp, teach, out = inp.to(DEVICE), teach.to(DEVICE), out.to(DEVICE)
             this_batch_size = inp.size(0)
             
-            mask = torch.rand(inp.shape, device=DEVICE) < mask_percent
+            mask = torch.rand(inp.shape, device=DEVICE) < self.mask_percent
             mask[:,0] = False # don't mask the first token
             inp = inp.masked_fill(mask, tokenizer.pad_idx)
             
-            mask = torch.rand(teach.shape, device=DEVICE) < mask_percent
+            mask = torch.rand(teach.shape, device=DEVICE) < self.mask_percent
             mask[:,0] = False # don't mask the first token
             teach = teach.masked_fill(mask, tokenizer.pad_idx)
             
+            if self.values_mask:
+                teach = teach.masked_fill(torch.isin(teach, value_indexes), tokenizer.pad_idx)
+
             loss = self._train_batch(inp, teach, out)
             trn_loss.append(loss)
             utils.write_path(self.metrics_path,f"train\t{i}\t{loss/this_batch_size}\t{self.optimizer.param_groups[0]['lr']:.4f}\n")
@@ -122,8 +144,9 @@ model = mt.MultitaskDecoderTransformer(tokenizer).to(DEVICE)
 model = torch.nn.DataParallel(model)
 
 trnds = mt.SequenceShiftDataset("data/processed/multitask_tensors/trn", tokenizer.pad_idx, tokenizer.SEP_IDX, tokenizer.END_IDX)
+trndl = torch.utils.data.DataLoader(trnds, batch_size=248, shuffle=True, prefetch_factor=100, num_workers=20)
 valds = mt.SequenceShiftDataset("data/processed/multitask_tensors/tst", tokenizer.pad_idx, tokenizer.SEP_IDX, tokenizer.END_IDX)
-
+valdl = torch.utils.data.DataLoader(valds, batch_size=248, shuffle=True, prefetch_factor=100, num_workers=20)
 # (i,o) = valds[0]
 
 # inp, teach, out = valds[0]
@@ -131,8 +154,13 @@ valds = mt.SequenceShiftDataset("data/processed/multitask_tensors/tst", tokenize
 # model(inp.unsqueeze(0),teach.unsqueeze(0)).shape
 
 # len(trnds) / 1024 = 1225
-trainer = Trainer(model)
-trainer.train(trnds, valds, mask_percent=0.5, batch_size=256)
+trainer = Trainer(model)\
+    .set_trn_iterator(itertools.cycle(enumerate(trndl)))\
+    .set_validation_dataloader(valdl)\
+    .set_mask_percent(0.0)\
+    .set_metrics_file(pathlib.Path("metrics/multitask_loss.tsv"))\
+    .set_values_mask_flag(True)
+
 trainer.start()
 
 # EVALUATE ===================================================================================================
@@ -195,14 +223,14 @@ def extract_probabilities_of_one(out, probs):
 
 def evaluate(model):
 
-    tst = mt.SequenceShiftDataset("data/processed/multitask_tensors/hld", tokenizer.pad_idx, tokenizer.SEP_IDX, tokenizer.END_IDX)
+    tst = mt.SequenceShiftDataset("data/processed/multitask_tensors/tst", tokenizer.pad_idx, tokenizer.SEP_IDX, tokenizer.END_IDX)
     
     global signal_received 
     signal_received = False
     
     out_df = pd.DataFrame()
-    for i in tqdm.tqdm(range(len(tst))):
-    # for i in tqdm.tqdm(range(1000)):
+    # for i in tqdm.tqdm(range(len(tst))):
+    for i in tqdm.tqdm(range(10000)):
         if signal_received: break
         inp, teach, out = tst[i]
         inp, teach, out = inp.to(DEVICE), teach.to(DEVICE), out.to(DEVICE)
