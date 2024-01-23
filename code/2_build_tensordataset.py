@@ -65,8 +65,8 @@ def build_multitask_supervised_data(spark):
     num_values = int(data.agg(F.max('value')).collect()[0][0] + 1) # TODO this assumes an index identity for values
     tokenizer = cvae.tokenizer.SelfiesPropertyValTokenizer(selfies_tok, num_assays, num_values)
 
-    savepath = cvae.utils.mk_empty_directory('data/processed/selfies_property_val_tokenizer', overwrite=True)
-    tokenizer.save(savepath)
+    tokenizer.save(cvae.utils.mk_empty_directory('data/processed/selfies_property_val_tokenizer', overwrite=True))
+    tokenizer.save(cvae.utils.mk_empty_directory('brick/selfies_property_val_tokenizer', overwrite=True))
 
     def create_tensors(partition, outdir):
         partition = list(partition)

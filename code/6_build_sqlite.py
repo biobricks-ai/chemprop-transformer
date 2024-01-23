@@ -1,6 +1,7 @@
 import pyspark.sql, pyspark.sql.functions as F
 from pyspark.sql.functions import col
 import biobricks as bb, pandas as pd
+from cvae.tokenizer import selfies_property_val_tokenizer as spt
 
 spark = pyspark.sql.SparkSession.builder \
     .appName("ChemharmonyDataProcessing") \
@@ -10,21 +11,30 @@ spark = pyspark.sql.SparkSession.builder \
     
 ch = bb.assets('chemharmony')
 
-pytorch_property_id = spark.read.parquet("data/processed/activities.parquet")\
+tokenizer = spt.SelfiesPropertyValTokenizer.load('data/processed/selfies_property_val_tokenizer')
+
+pytorch_id_to_property_token = lambda x : tokenizer.assay_id_to_token_idx(x)
+pytorch_id_to_property_token_udf = F.udf(pytorch_id_to_property_token, pyspark.sql.types.LongType())
+property_tokens = spark.read.parquet("data/processed/activities.parquet")\
     .withColumnRenamed('assay','property_id')\
     .withColumnRenamed('assay_index','property_pytorch_index')\
-    .withColumn("property_pytorch_index", col("property_pytorch_index").cast("int")) \
-    .select("property_id","property_pytorch_index").distinct()
+    .withColumn("property_pytorch_index", col("property_pytorch_index").cast("int"))\
+    .withColumn("property_token", pytorch_id_to_property_token_udf("property_pytorch_index"))\
+    .select("property_id","property_token").distinct()
 
+binval_to_value_token = lambda x : tokenizer.value_id_to_token_idx(int(x))
+binval_to_value_token_udf = F.udf(binval_to_value_token, pyspark.sql.types.LongType())
 raw_activities = spark.read.parquet(ch.activities_parquet)\
-    .withColumnRenamed('pid', 'property_id')\
     .withColumnRenamed('sid', 'substance_id')\
     .withColumnRenamed('aid', 'activity_id')\
-    .select('source','activity_id','property_id','substance_id','inchi','smiles','value','binary_value')
+    .withColumnRenamed('pid', 'property_id')\
+    .join(property_tokens, on='property_id')\
+    .withColumn('value_token',binval_to_value_token_udf('binary_value'))\
+    .select('source','activity_id','property_id','property_token','substance_id','inchi','smiles','value','binary_value','value_token')
 
 prop = spark.read.parquet(ch.properties_parquet)
 prop = prop.withColumnRenamed('pid', 'property_id')
-prop = prop.join(pytorch_property_id, on='property_id')
+prop = prop.join(property_tokens, on='property_id')
 
 raw_prop_cat = spark.read.parquet(ch.property_categories_parquet)
 raw_prop_cat = raw_prop_cat.withColumnRenamed('pid', 'property_id')
@@ -39,13 +49,12 @@ prop_cat = raw_prop_cat.join(cat, on='category').select('property_id', 'category
 ## sources and property_source
 src = prop.select('source').distinct()
 src = src.withColumn('source_id', F.monotonically_increasing_id())
-prop = prop.join(src, on='source').select('property_id','property_pytorch_index','source_id','data')
+prop = prop.join(src, on='source').select('property_id','property_token','source_id','data')
 
 ## activities and activity_source 
 activities = raw_activities\
-    .select('source','activity_id','property_id','substance_id','inchi','smiles','value','binary_value')\
     .join(src, on='source')\
-    .select('source_id','activity_id','property_id','substance_id','inchi','smiles','value','binary_value')
+    .select('source_id','activity_id','property_id','property_token','substance_id','inchi','smiles','value','binary_value','value_token')
 
 
 # WRITE TABLE TO SQLITE =============================================================
@@ -62,10 +71,30 @@ activities.toPandas().to_sql('activity', conn, if_exists='replace', index=False)
 
 conn.close()
 
+## CREATE INDEXES =============================================================
+conn = sqlite3.connect('data/processed/cvae.sqlite')
+cursor = conn.cursor()
+
+# Create indexes
+cursor.execute("CREATE INDEX IF NOT EXISTS idx_activity_source_id ON activity (source_id);")
+cursor.execute("CREATE INDEX IF NOT EXISTS idx_activity_property_id ON activity (property_id);")
+cursor.execute("CREATE INDEX IF NOT EXISTS idx_source_source_id ON source (source_id);")
+cursor.execute("CREATE INDEX IF NOT EXISTS idx_property_property_id ON property (property_id);")
+cursor.execute("CREATE INDEX IF NOT EXISTS idx_property_category_property_id ON property_category (property_id);")
+cursor.execute("CREATE INDEX IF NOT EXISTS idx_category_category_id ON category (category_id);")
+cursor.execute("CREATE INDEX IF NOT EXISTS idx_property_category_category_id ON property_category (category_id);")
+cursor.execute("CREATE INDEX IF NOT EXISTS idx_inchi ON activity (inchi);")
+
+conn.commit()
+conn.close()
+
+# MOVE RESULT TO BRICK/cvae.sqlite =============================================================
+import shutil
+shutil.move('data/processed/cvae.sqlite', 'brick/cvae.sqlite')
+
 # DO A SIMPLE TEST QUERY =============================================================
 # query the graph
-import sqlite3
-conn = sqlite3.connect('data/processed/cvae.sqlite')
+conn = sqlite3.connect('brick/cvae.sqlite')
 
 query = """
 SELECT * 

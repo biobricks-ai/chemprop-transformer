@@ -159,7 +159,7 @@ trainer = Trainer(model)\
     .set_validation_dataloader(valdl)\
     .set_mask_percent(0.0)\
     .set_metrics_file(pathlib.Path("metrics/multitask_loss.tsv"))\
-    .set_values_mask_flag(True)
+    .set_values_mask_flag(False)
 
 trainer.start()
 
@@ -237,7 +237,7 @@ def evaluate(model):
         
         # mask all the value tokens
         value_indexes = torch.LongTensor(list(tokenizer.value_indexes().values())).to(DEVICE)
-        teach = teach.masked_fill(torch.isin(teach, value_indexes), tokenizer.pad_idx)
+        # teach = teach.masked_fill(torch.isin(teach, value_indexes), tokenizer.pad_idx)
         pred = model(inp.unsqueeze(0), teach.unsqueeze(0))
         probs = torch.softmax(pred[0],dim=1).detach()
         
