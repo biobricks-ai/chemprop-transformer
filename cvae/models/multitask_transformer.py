@@ -76,6 +76,7 @@ class MultitaskDecoderTransformer(nn.Module):
         memory_mask = input == self.token_pad_idx
         
         input_embedding = self.positional_encoding(self.embedding(input))
+        
         teach_forcing = self.positional_encoding(self.embedding(teach_forcing))
         tgt_mask = generate_square_subsequent_mask(teach_forcing.size(1)).to(input.device)
         decoded = self.decoder(teach_forcing, input_embedding, tgt_mask=tgt_mask, memory_key_padding_mask=memory_mask)

@@ -1,7 +1,7 @@
-# docker build -t insilica/chemsim .
-# docker run -p 6515:6515 -v .:/chemsim --rm --gpus all -it --name chemsim insilica/chemsim
+# docker build -t biobricks-ai/cvae .
+# docker run -p 6515:6515 -v .:/chemsim --rm --gpus all -it --name chemsim biobricks-ai/cvae
 # curl "http://localhost:6515/predict?inchi=InChI=1S/C9H8O4/c1-6(10)13-8-5-3-2-4-7(8)9(11)12/h2-5H,1H3,(H,11,12)" 
-FROM nvidia/cuda:11.7.1-devel-ubuntu20.04
+FROM nvidia/cuda:12.3.1-base-ubuntu20.04
 
 # Set a noninteractive frontend to prevent prompts
 ENV DEBIAN_FRONTEND=noninteractive
@@ -34,6 +34,11 @@ RUN apt-get install -y libxrender1
 COPY flask_cvae/requirements.txt requirements.txt
 RUN pip install --trusted-host pypi.python.org -r requirements.txt
 
+# Copy the necessary resources
+COPY brick/mtransform2 brick/mtransform2
+COPY brick/cvae.sqlite brick/cvae.sqlite
+COPY brick/selfies_property_val_tokenizer brick/selfies_property_val_tokenizer
+
 # Expose the port the app runs on
 EXPOSE 6515
 
@@ -43,4 +48,4 @@ ENV ROOT_URL=http://localhost:6515
 
 # Start the container with a bash shell
 WORKDIR /chemsim
-CMD ["gunicorn", "-b", "0.0.0.0:6515", "--timeout", "240", "--graceful-timeout", "240", "--workers", "1", "flask_cvae.app:app"]
+CMD ["gunicorn", "-b", "0.0.0.0:6515", "--timeout", "480", "--graceful-timeout", "480", "--workers", "1", "flask_cvae.app:app"]

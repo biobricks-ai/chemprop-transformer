@@ -7,3 +7,5 @@ matplotlib
 faiss-gpu
 pandas
 gunicorn
+selfies==2.1.1
+pyspark==3.5.0
