@@ -48,3 +48,10 @@ stages:
     - models/train
     outs:
     - metrics/inference
+  
+  sqlite:
+    cmd: python code/6_build_sqlite.py
+    deps:
+    - code/6_build_sqlite.py
+    outs:
+    - brick/cvae.sqlite

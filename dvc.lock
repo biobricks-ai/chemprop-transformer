@@ -1,0 +1,14 @@
+schema: '2.0'
+stages:
+  sqlite:
+    cmd: python code/6_build_sqlite.py
+    deps:
+    - path: code/6_build_sqlite.py
+      hash: md5
+      md5: 247b22651a1d117fc62a1d1d4fc695e7
+      size: 5637
+    outs:
+    - path: brick/cvae.sqlite
+      hash: md5
+      md5: 58bd399af35a653d49521bf0f6e7388a
+      size: 7417442304

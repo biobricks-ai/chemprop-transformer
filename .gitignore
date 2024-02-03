@@ -4,3 +4,4 @@ __pycache__
 /metrics
 notebook/plots/*
 Rplots.pdf
+scratch.R

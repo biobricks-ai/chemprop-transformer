@@ -1,6 +1,9 @@
+import os, sys
 import pyspark.sql, pyspark.sql.functions as F
 from pyspark.sql.functions import col
 import biobricks as bb, pandas as pd
+
+sys.path.insert(0, os.getcwd())
 from cvae.tokenizer import selfies_property_val_tokenizer as spt
 
 spark = pyspark.sql.SparkSession.builder \
@@ -32,12 +35,15 @@ raw_activities = spark.read.parquet(ch.activities_parquet)\
     .withColumn('value_token',binval_to_value_token_udf('binary_value'))\
     .select('source','activity_id','property_id','property_token','substance_id','inchi','smiles','value','binary_value','value_token')
 
+raw_prop_title = spark.read.parquet(ch.property_titles_parquet).withColumnRenamed('pid', 'property_id')
+
 prop = spark.read.parquet(ch.properties_parquet)
 prop = prop.withColumnRenamed('pid', 'property_id')
-prop = prop.join(property_tokens, on='property_id')
+prop = prop.join(property_tokens, on='property_id').join(raw_prop_title, on='property_id')
 
 raw_prop_cat = spark.read.parquet(ch.property_categories_parquet)
 raw_prop_cat = raw_prop_cat.withColumnRenamed('pid', 'property_id')
+
 
 # CREATE SOME NORMALIZED TABLES PROPERTY, CATEGORY, SOURCE =========================
 
@@ -49,7 +55,7 @@ prop_cat = raw_prop_cat.join(cat, on='category').select('property_id', 'category
 ## sources and property_source
 src = prop.select('source').distinct()
 src = src.withColumn('source_id', F.monotonically_increasing_id())
-prop = prop.join(src, on='source').select('property_id','property_token','source_id','data')
+prop = prop.join(src, on='source').select('property_id','title','property_token','source_id','data')
 
 ## activities and activity_source 
 activities = raw_activities\
