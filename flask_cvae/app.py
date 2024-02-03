@@ -76,18 +76,18 @@ class Predictor():
 
         conn.close()
         return res
-        
-    # returns all predicted properties along with their categories
+    
+    # returns predictions for one property_token
     # self = Predictor()
     # inchi = "InChI=1S/C9H8O4/c1-6(10)13-8-5-3-2-4-7(8)9(11)12/h2-5H,1H3,(H,11,12)"
-    def predict(self, inchi) -> list[dict]:
+    # property_token = 3808
+    def predict_property(self, inchi, property_token) -> dict:
         smiles = H.inchi_to_smiles_safe(inchi)
         selfies = H.smiles_to_selfies_safe(smiles)
         
         known_props = pd.DataFrame(self._get_known_properties(inchi))
         property_value_pairs = list(zip(known_props['property_token'], known_props['value_token']))
 
-        results = []
         selfies_tokens = torch.LongTensor(self.tokenizer.selfies_tokenizer.selfies_to_indices(selfies))
         av_flat = torch.LongTensor(list(chain.from_iterable(property_value_pairs)))
         av_reshaped = av_flat.reshape(av_flat.size(0) // 2, 2)
@@ -100,32 +100,67 @@ class Predictor():
             av_sos_trunc = torch.cat([torch.LongTensor([self.tokenizer.SEP_IDX]), av_truncate])
             selfies_av = torch.hstack([selfies_tokens, av_sos_trunc])
             rand_tensors.append(selfies_av)
-            
         
         rand_tensors = torch.stack(rand_tensors).to(DEVICE)
         value_indexes = list(self.tokenizer.value_indexes().values())
         one_index = value_indexes.index(self.tokenizer.value_id_to_token_idx(1))
         
-        for property_token in tqdm.tqdm(self.all_property_tokens):
-            property_token_tensor = torch.LongTensor([property_token, self.tokenizer.PAD_IDX, self.tokenizer.END_IDX]).view(1,-1).to(DEVICE)
-            av_add_prop = torch.cat([rand_tensors, property_token_tensor.expand(100, -1)], dim=1)
-            teach_force = torch.clone(av_add_prop)
-            predictions = torch.softmax(self.model(av_add_prop, teach_force)[:, -3, value_indexes], dim=1).detach().cpu().numpy()
-            mean_pred = np.mean(predictions[:,one_index], axis=0)
-            results.append({'property_token': property_token, 'probability_of_one': mean_pred})
+        property_token_tensor = torch.LongTensor([property_token, self.tokenizer.PAD_IDX, self.tokenizer.END_IDX]).view(1,-1).to(DEVICE)
+        av_add_prop = torch.cat([rand_tensors, property_token_tensor.expand(100, -1)], dim=1)
+        teach_force = torch.clone(av_add_prop)
+        predictions = torch.softmax(self.model(av_add_prop, teach_force)[:, -3, value_indexes], dim=1).detach().cpu().numpy()
+        mean_pred = np.mean(predictions[:,one_index], axis=0)
+                
+        return mean_pred
+    
+    # returns all predicted properties along with their categories
+    # self = Predictor()
+    # inchi = "InChI=1S/C9H8O4/c1-6(10)13-8-5-3-2-4-7(8)9(11)12/h2-5H,1H3,(H,11,12)"
+    # def predict(self, inchi) -> list[dict]:
+    #     smiles = H.inchi_to_smiles_safe(inchi)
+    #     selfies = H.smiles_to_selfies_safe(smiles)
         
-        # select propert
-        results_df = pd.DataFrame(results)
-        known_df = known_props[['property_token', 'value']]
-        return_df = self.all_props.merge(results_df, how='left', on='property_token')
-        return_df = return_df.merge(known_df, how='left', on='property_token')
+    #     known_props = pd.DataFrame(self._get_known_properties(inchi))
+    #     property_value_pairs = list(zip(known_props['property_token'], known_props['value_token']))
+
+    #     results = []
+    #     selfies_tokens = torch.LongTensor(self.tokenizer.selfies_tokenizer.selfies_to_indices(selfies))
+    #     av_flat = torch.LongTensor(list(chain.from_iterable(property_value_pairs)))
+    #     av_reshaped = av_flat.reshape(av_flat.size(0) // 2, 2)
         
-        # rename some columns for clarity
-        return_df = return_df.rename(columns={'value': 'known_value'})
-        return_df = return_df.rename(columns={'probability_of_one': 'predicted_positive_probability'})
-        return_df = return_df.rename(columns={'strength': 'strength_of_property_categorization'})
+    #     rand_tensors = []
+    #     for _ in range(100):
+    #         av_shuffled = av_reshaped[torch.randperm(av_reshaped.size(0)),:].reshape(av_flat.size(0))
+    #         av_truncate = av_shuffled[0:18]
+            
+    #         av_sos_trunc = torch.cat([torch.LongTensor([self.tokenizer.SEP_IDX]), av_truncate])
+    #         selfies_av = torch.hstack([selfies_tokens, av_sos_trunc])
+    #         rand_tensors.append(selfies_av)
         
-        return return_df
+    #     rand_tensors = torch.stack(rand_tensors).to(DEVICE)
+    #     value_indexes = list(self.tokenizer.value_indexes().values())
+    #     one_index = value_indexes.index(self.tokenizer.value_id_to_token_idx(1))
+        
+    #     for property_token in tqdm.tqdm(self.all_property_tokens):
+    #         property_token_tensor = torch.LongTensor([property_token, self.tokenizer.PAD_IDX, self.tokenizer.END_IDX]).view(1,-1).to(DEVICE)
+    #         av_add_prop = torch.cat([rand_tensors, property_token_tensor.expand(100, -1)], dim=1)
+    #         teach_force = torch.clone(av_add_prop)
+    #         predictions = torch.softmax(self.model(av_add_prop, teach_force)[:, -3, value_indexes], dim=1).detach().cpu().numpy()
+    #         mean_pred = np.mean(predictions[:,one_index], axis=0)
+    #         results.append({'property_token': property_token, 'probability_of_one': mean_pred})
+        
+    #     # select propert
+    #     results_df = pd.DataFrame(results)
+    #     known_df = known_props[['property_token', 'value']]
+    #     return_df = self.all_props.merge(results_df, how='left', on='property_token')
+    #     return_df = return_df.merge(known_df, how='left', on='property_token')
+        
+    #     # rename some columns for clarity
+    #     return_df = return_df.rename(columns={'value': 'known_value'})
+    #     return_df = return_df.rename(columns={'probability_of_one': 'predicted_positive_probability'})
+    #     return_df = return_df.rename(columns={'strength': 'strength_of_property_categorization'})
+        
+    #     return return_df
 
 
 app = Flask(__name__)
@@ -140,8 +175,5 @@ def predict():
     
     with predict_lock:
         df = predictor.predict(inchi)
-    
-    # take top 100 rows
-    df = df.head(100)
-    return jsonify(df.to_json(orient="records"))
 
+    return jsonify(df.to_json(orient="records"))
