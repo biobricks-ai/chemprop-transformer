@@ -1,0 +1,7 @@
+__pycache__
+/data
+/models
+/metrics
+notebook/plots/*
+Rplots.pdf
+scratch.R

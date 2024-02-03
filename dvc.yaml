@@ -1,0 +1,57 @@
+stages:
+  
+  requirements:
+    cmd: bash code/0_Requirements.sh
+    deps:
+    - requirements.txt
+    outs:
+    - .dvc/cache
+
+  download:
+    cmd: python code/1_Download.py
+    deps:
+    - code/1_Download.py
+    outs:
+    - data/raw
+
+  preprocessing:
+    cmd: python code/2_Preprocess.py
+    deps:
+    - code/2_Preprocess.py
+    - data/raw
+    outs:
+    - data/processed
+
+  train:
+    cmd: python code/3_Train.py
+    deps:
+    - code/3_Train.py
+    - data/processed
+    outs:
+    - metrics/train
+    - models/train
+
+  test:
+    cmd: python code/4_Test.py
+    deps:
+    - code/4_Test.py
+    - data/processed
+    - models/train
+    outs:
+    - metrics/test
+
+  inference:
+    cmd: python code/5_Inference.py
+    deps:
+    - code/5_Inference.py
+    - data/processed
+    - models/train
+    outs:
+    - metrics/inference
+  
+  sqlite:
+    cmd: python code/6_build_sqlite.py
+    deps:
+    - code/6_build_sqlite.py
+    outs:
+    - brick/cvae.sqlite
