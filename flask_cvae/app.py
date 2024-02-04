@@ -81,7 +81,11 @@ class Predictor():
     # self = Predictor()
     # inchi = "InChI=1S/C9H8O4/c1-6(10)13-8-5-3-2-4-7(8)9(11)12/h2-5H,1H3,(H,11,12)"
     # property_token = 3808
-    def predict_property(self, inchi, property_token) -> dict:
+    def predict_property(self, inchi, property_token, seed=137) -> dict:
+        # Set the seeds for reproducibility
+        np.random.seed(seed)
+        torch.manual_seed(seed)
+        
         smiles = H.inchi_to_smiles_safe(inchi)
         selfies = H.smiles_to_selfies_safe(smiles)
         
@@ -92,8 +96,9 @@ class Predictor():
         av_flat = torch.LongTensor(list(chain.from_iterable(property_value_pairs)))
         av_reshaped = av_flat.reshape(av_flat.size(0) // 2, 2)
         
+        num_rand_tensors = 1000
         rand_tensors = []
-        for _ in range(100):
+        for _ in range(num_rand_tensors):
             av_shuffled = av_reshaped[torch.randperm(av_reshaped.size(0)),:].reshape(av_flat.size(0))
             av_truncate = av_shuffled[0:18]
             
@@ -106,7 +111,7 @@ class Predictor():
         one_index = value_indexes.index(self.tokenizer.value_id_to_token_idx(1))
         
         property_token_tensor = torch.LongTensor([property_token, self.tokenizer.PAD_IDX, self.tokenizer.END_IDX]).view(1,-1).to(DEVICE)
-        av_add_prop = torch.cat([rand_tensors, property_token_tensor.expand(100, -1)], dim=1)
+        av_add_prop = torch.cat([rand_tensors, property_token_tensor.expand(num_rand_tensors, -1)], dim=1)
         teach_force = torch.clone(av_add_prop)
         predictions = torch.softmax(self.model(av_add_prop, teach_force)[:, -3, value_indexes], dim=1).detach().cpu().numpy()
         mean_pred = np.mean(predictions[:,one_index], axis=0)
@@ -170,10 +175,11 @@ predictor = Predictor()
 @app.route('/predict', methods=['GET'])
 def predict():
     inchi = request.args.get('inchi')
+    property_token = request.args.get('property_token')
     if inchi is None:
         return jsonify({'error': 'inchi parameter is required'})
     
     with predict_lock:
-        df = predictor.predict(inchi)
+        mean_value = float(predictor.predict_property(inchi, int(property_token)))
 
-    return jsonify(df.to_json(orient="records"))
+    return jsonify({"inchi":inchi, "property_token":property_token, "positive_prediction":mean_value})
