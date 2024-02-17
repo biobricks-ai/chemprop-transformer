@@ -10,7 +10,12 @@ A presentation of this work is available on google drive [ChemHarmony and Biosim
 `docker run --rm --gpus all nvidia/cuda:11.7.1-devel-ubuntu20.04 nvidia-smi`
 3. build dockerfile
 4. run dockerfile:  
-`docker run --gpus all -it insilica/chemsim`
+
+`docker run -p 6515:6515 -v .:/chemsim --rm --gpus all -it --name chemsim biobricks-ai/cvae`
+
+## deploy
+figure this out...
+<!-- `docker run --gpus all -it insilica/chemsim` -->
 
 ## References
 

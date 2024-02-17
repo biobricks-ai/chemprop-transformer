@@ -14,10 +14,42 @@ import pandas
 from itertools import chain
 import os
 import threading
+import uuid
 
 DEVICE = torch.device(f'cuda:0')
 predict_lock = threading.Lock()
+cvaesql = sqlite3.connect('brick/cvae.sqlite')
+cvaesql.row_factory = sqlite3.Row  # This enables column access by name
 
+psqlite = sqlite3.connect('flask_cvae/predictions.sqlite')
+# create predictions table property_token, property_title, inchi, value
+cmd = "CREATE TABLE IF NOT EXISTS prediction (inchi TEXT, property_token INTEGER, value float)"
+psqlite.execute(cmd)
+cmd = "CREATE INDEX IF NOT EXISTS idx_inchi_property_token ON prediction (inchi, property_token)"
+psqlite.execute(cmd)
+
+                    
+class Prediction():
+    
+    def __init__(self, inchi, property_token, value):
+        self.inchi = inchi
+        self.value = value
+        self.property_token = property_token
+    
+    @staticmethod
+    def save(inchi, property_token, value):
+        cmd = "INSERT INTO prediction (inchi, property_token, value) VALUES (?, ?, ?)"
+        psqlite.execute(cmd, (inchi, property_token, value))
+        psqlite.commit()
+    
+    @staticmethod
+    def get(inchi, property_token):
+        cmd = "SELECT value FROM prediction WHERE inchi = ? AND property_token = ?"
+        res = psqlite.execute(cmd, (inchi, property_token)).fetchone()
+        if res:
+            return Prediction(inchi, property_token, res[0])  # Return the found prediction
+        return None  # Return None if no prediction was found
+        
 class Predictor():
     
     def __init__(self):
@@ -118,68 +150,43 @@ class Predictor():
                 
         return mean_pred
     
-    # returns all predicted properties along with their categories
-    # self = Predictor()
-    # inchi = "InChI=1S/C9H8O4/c1-6(10)13-8-5-3-2-4-7(8)9(11)12/h2-5H,1H3,(H,11,12)"
-    # def predict(self, inchi) -> list[dict]:
-    #     smiles = H.inchi_to_smiles_safe(inchi)
-    #     selfies = H.smiles_to_selfies_safe(smiles)
+    def cached_predict_property(self, inchi, property_token):
+        prediction = Prediction.get(inchi, property_token)
+        if prediction is not None: 
+            return prediction.value
         
-    #     known_props = pd.DataFrame(self._get_known_properties(inchi))
-    #     property_value_pairs = list(zip(known_props['property_token'], known_props['value_token']))
-
-    #     results = []
-    #     selfies_tokens = torch.LongTensor(self.tokenizer.selfies_tokenizer.selfies_to_indices(selfies))
-    #     av_flat = torch.LongTensor(list(chain.from_iterable(property_value_pairs)))
-    #     av_reshaped = av_flat.reshape(av_flat.size(0) // 2, 2)
-        
-    #     rand_tensors = []
-    #     for _ in range(100):
-    #         av_shuffled = av_reshaped[torch.randperm(av_reshaped.size(0)),:].reshape(av_flat.size(0))
-    #         av_truncate = av_shuffled[0:18]
-            
-    #         av_sos_trunc = torch.cat([torch.LongTensor([self.tokenizer.SEP_IDX]), av_truncate])
-    #         selfies_av = torch.hstack([selfies_tokens, av_sos_trunc])
-    #         rand_tensors.append(selfies_av)
-        
-    #     rand_tensors = torch.stack(rand_tensors).to(DEVICE)
-    #     value_indexes = list(self.tokenizer.value_indexes().values())
-    #     one_index = value_indexes.index(self.tokenizer.value_id_to_token_idx(1))
-        
-    #     for property_token in tqdm.tqdm(self.all_property_tokens):
-    #         property_token_tensor = torch.LongTensor([property_token, self.tokenizer.PAD_IDX, self.tokenizer.END_IDX]).view(1,-1).to(DEVICE)
-    #         av_add_prop = torch.cat([rand_tensors, property_token_tensor.expand(100, -1)], dim=1)
-    #         teach_force = torch.clone(av_add_prop)
-    #         predictions = torch.softmax(self.model(av_add_prop, teach_force)[:, -3, value_indexes], dim=1).detach().cpu().numpy()
-    #         mean_pred = np.mean(predictions[:,one_index], axis=0)
-    #         results.append({'property_token': property_token, 'probability_of_one': mean_pred})
-        
-    #     # select propert
-    #     results_df = pd.DataFrame(results)
-    #     known_df = known_props[['property_token', 'value']]
-    #     return_df = self.all_props.merge(results_df, how='left', on='property_token')
-    #     return_df = return_df.merge(known_df, how='left', on='property_token')
-        
-    #     # rename some columns for clarity
-    #     return_df = return_df.rename(columns={'value': 'known_value'})
-    #     return_df = return_df.rename(columns={'probability_of_one': 'predicted_positive_probability'})
-    #     return_df = return_df.rename(columns={'strength': 'strength_of_property_categorization'})
-        
-    #     return return_df
-
+        prediction = float(self.predict_property(inchi, property_token))
+        Prediction.save(inchi, property_token, prediction)
+        return prediction
 
 app = Flask(__name__)
 predictor = Predictor()
 
-
 @app.route('/predict', methods=['GET'])
 def predict():
     inchi = request.args.get('inchi')
-    property_token = request.args.get('property_token')
-    if inchi is None:
-        return jsonify({'error': 'inchi parameter is required'})
+    property_token = request.args.get('property_token', None)
+    if inchi is None or property_token is None:
+        return jsonify({'error': 'inchi and property token parameters are required'})
     
     with predict_lock:
         mean_value = float(predictor.predict_property(inchi, int(property_token)))
 
     return jsonify({"inchi":inchi, "property_token":property_token, "positive_prediction":mean_value})
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    

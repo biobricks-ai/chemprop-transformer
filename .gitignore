@@ -5,3 +5,4 @@ __pycache__
 notebook/plots/*
 Rplots.pdf
 scratch.R
+scratch.Rmd
