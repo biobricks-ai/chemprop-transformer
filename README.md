@@ -12,19 +12,8 @@ A presentation of this work is available on google drive [ChemHarmony and Biosim
 4. run dockerfile:  
 `docker run -p 6515:6515 -v .:/chemsim --rm --gpus all -it --name chemsim biobricks-ai/cvae`
 
-## deploy
-figure this out...
-<!-- `docker run --gpus all -it insilica/chemsim` -->
 
-## References
-
-* [Conditional Variational Autoencoder for Molecular Biological Similarity](https://arxiv.org/abs/XXX.XXXXX)
-
-## License
-MIT
-
-
-# run service
+# Run service
 
 <!-- start container -->
 docker run -p 6515:6515 -v .:/chemsim --rm --gpus all -it --name chemsim biobricks-ai/cvae
@@ -37,3 +26,10 @@ ssh -Nf -R 12000:localhost:6515 ubuntu@api.insilica.co
 
 <!-- test against api.insilica.co -->
 curl -X GET "https://api.insilica.co/service/run/chemsim/predict?property_token=5042&inchi=InChI=1S/C9H8O4/c1-6(10)13-8-5-3-2-4-7(8)9(11)12/h2-5H,1H3,(H,11,12)"
+
+## References
+
+* [Conditional Variational Autoencoder for Molecular Biological Similarity](https://arxiv.org/abs/XXX.XXXXX)
+
+## License
+MIT
