@@ -10,7 +10,6 @@ A presentation of this work is available on google drive [ChemHarmony and Biosim
 `docker run --rm --gpus all nvidia/cuda:11.7.1-devel-ubuntu20.04 nvidia-smi`
 3. build dockerfile
 4. run dockerfile:  
-
 `docker run -p 6515:6515 -v .:/chemsim --rm --gpus all -it --name chemsim biobricks-ai/cvae`
 
 ## deploy
@@ -26,6 +25,15 @@ MIT
 
 
 # run service
+
+<!-- start container -->
+docker run -p 6515:6515 -v .:/chemsim --rm --gpus all -it --name chemsim biobricks-ai/cvae
+
+<!-- test things are working -->
 curl -X GET "http://localhost:6515/predict?property_token=5042&inchi=InChI=1S/C9H8O4/c1-6(10)13-8-5-3-2-4-7(8)9(11)12/h2-5H,1H3,(H,11,12)"
 
+<!-- create reverse tunnel from api.insilica.co 12000 to localhost:6515 -->
+ssh -Nf -R 12000:localhost:6515 ubuntu@api.insilica.co
+
+<!-- test against api.insilica.co -->
 curl -X GET "https://api.insilica.co/service/run/chemsim/predict?property_token=5042&inchi=InChI=1S/C9H8O4/c1-6(10)13-8-5-3-2-4-7(8)9(11)12/h2-5H,1H3,(H,11,12)"
