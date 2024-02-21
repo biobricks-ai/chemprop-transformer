@@ -15,6 +15,7 @@ from itertools import chain
 import os
 import threading
 import uuid
+import logging
 
 DEVICE = torch.device(f'cuda:0')
 predict_lock = threading.Lock()
@@ -164,6 +165,7 @@ predictor = Predictor()
 
 @app.route('/predict', methods=['GET'])
 def predict():
+    print(f"Predicting property for inchi: {request.args.get('inchi')} and property token: {request.args.get('property_token')}")
     inchi = request.args.get('inchi')
     property_token = request.args.get('property_token', None)
     if inchi is None or property_token is None:
