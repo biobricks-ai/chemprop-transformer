@@ -205,6 +205,9 @@ class SequenceShiftDataset(torch.utils.data.Dataset):
         # file_path = next(pathlib.Path(path).glob("*.pt"))
         for file_path in tqdm.tqdm(pathlib.Path(path).glob("*.pt")):
             file_data = torch.load(file_path)
+            
+            num_props = file_data['assay_vals'].size(1)
+            assay_vals = file_data['assay_vals'][num_props > 9]
             self.data.extend([(file_data['selfies'], file_data['assay_vals'])])
             cumulative_length += file_data['selfies'].size(0)
             self.cumulative_lengths.append(cumulative_length)

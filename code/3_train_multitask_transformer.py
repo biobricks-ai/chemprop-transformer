@@ -34,6 +34,10 @@ class Trainer():
         self.trn_iterator = iterator
         return self
     
+    def set_evaluation_interval(self, interval):
+        self.evaluation_interval = interval
+        return self
+    
     def set_mask_percent(self, mask_percent):
         self.mask_percent = mask_percent
         return self
@@ -87,8 +91,6 @@ class Trainer():
         i, (inp, teach, out) = next(self.trn_iterator)
         batch_size = inp.size(0)
         
-        # evaluate twice per epoch
-        evaluation_interval = ((len(trnds)-1) // batch_size) // 2
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         
         value_indexes = torch.LongTensor(list(tokenizer.value_indexes().values())).to(DEVICE)
@@ -125,7 +127,7 @@ class Trainer():
                 trn_loss = []
             
             # EVALUATION UPDATE
-            if (i + 1) % evaluation_interval == 0:
+            if (i + 1) % self.evaluation_interval == 0:
                 epoch += 1
                 eval_loss = self._evaluation_loss(valdl)
                 self.scheduler.step(mean_loss)
@@ -153,9 +155,13 @@ valdl = torch.utils.data.DataLoader(valds, batch_size=248, shuffle=True, prefetc
 # inp, teach, out = inp.to(DEVICE), teach.to(DEVICE), out.to(DEVICE)
 # model(inp.unsqueeze(0),teach.unsqueeze(0)).shape
 
+trn_singletask = mt.SequenceShiftDataset("data/processed/single_task_tensors/trn", tokenizer.pad_idx, tokenizer.SEP_IDX, tokenizer.END_IDX)
+trn_singletask_dl = torch.utils.data.DataLoader(trn_singletask, batch_size=248, shuffle=True, prefetch_factor=100, num_workers=20)
+
 # len(trnds) / 1024 = 1225
 trainer = Trainer(model)\
-    .set_trn_iterator(itertools.cycle(enumerate(trndl)))\
+    .set_trn_iterator(itertools.cycle(enumerate(trn_singletask_dl)))\
+    .set_evaluation_interval(((len(trn_singletask)-1) // 248) // 2)\
     .set_validation_dataloader(valdl)\
     .set_mask_percent(0.0)\
     .set_metrics_file(pathlib.Path("metrics/multitask_loss.tsv"))\
