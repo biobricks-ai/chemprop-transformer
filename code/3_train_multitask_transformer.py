@@ -1,3 +1,8 @@
+# # TODO: make a good histogram of the AUCs for each property.
+# TODO:Show how AUC change over time. Median AUC for each position with line chart./Another way, for each property, it improves over time.
+# TODO:what's the difference between 0 to 1, 1 to 2, 2 to 3, take the median difference.
+# TODO: New training for adding inp
+
 import itertools, pathlib, numpy as np, tqdm
 import torch, torch.utils.data, torch.optim as optim
 import cvae.tokenizer, cvae.utils as utils
@@ -13,7 +18,7 @@ class Trainer():
     def __init__(self, model):
         self.model = model.to(DEVICE)
         self.optimizer = optim.AdamW(model.parameters(),lr=1e-3)
-        self.lossfn = mt.MultitaskTransformer.lossfn()
+        self.lossfn = mt.MultitaskTransfeormer.lossfn()
         
         self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, patience=5, factor=0.9, verbose=True, min_lr=1e-6)
         self.scheduler_loss = []

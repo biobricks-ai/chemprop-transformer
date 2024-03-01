@@ -72,7 +72,6 @@ class MultitaskDecoderTransformer(nn.Module):
 
     def forward(self, input, teach_forcing):
         
-        input = input[:,0:10]
         memory_mask = input == self.token_pad_idx
         
         input_embedding = self.positional_encoding(self.embedding(input))
@@ -154,7 +153,9 @@ class MultitaskTransformer(nn.Module):
         input_encoding = self.encoder(input_embedding, src_key_padding_mask=input == memory_mask)
         input_encoding = self.encoder_norm(input_encoding)
         
-        tgt_mask = generate_static_mask(0, teach_forcing.size(1)).to(input.device)
+        # tgt_mask = generate_static_mask(0, teach_forcing.size(1)).to(input.device)
+        tgt_mask = generate_square_subsequent_mask(0, teach_forcing.size(1)).to(input.device)
+        
         teach_forcing_encoding = self.positional_encoding(self.output_embedding(teach_forcing))
         decoded = self.decoder(teach_forcing_encoding, input_encoding, tgt_mask=tgt_mask, memory_key_padding_mask=memory_mask)
         decoded = self.decoder_norm(decoded)
@@ -196,18 +197,20 @@ import torch, torch.utils.data, torch.nn.functional as F
 
 class SequenceShiftDataset(torch.utils.data.Dataset):
 
-    def __init__(self, path, pad_idx, sep_idx, end_idx):
+    def __init__(self, path, tokenizer: SelfiesPropertyValTokenizer):
         self.data = []
         self.cumulative_lengths = [0]
         cumulative_length = 0
-        self.pad_idx, self.sep_idx, self.end_idx = pad_idx, sep_idx, end_idx
+        self.tokenizer= tokenizer
+        self.pad_idx, self.sep_idx, self.end_idx = tokenizer.PAD_IDX, tokenizer.SEP_IDX, tokenizer.END_IDX
+        
 
         # file_path = next(pathlib.Path(path).glob("*.pt"))
         for file_path in tqdm.tqdm(pathlib.Path(path).glob("*.pt")):
             file_data = torch.load(file_path)
             
-            num_props = file_data['assay_vals'].size(1)
-            assay_vals = file_data['assay_vals'][num_props > 9]
+            # num_props = file_data['assay_vals'].size(1)
+            # assay_vals = file_data['assay_vals'][num_props > 9]
             self.data.extend([(file_data['selfies'], file_data['assay_vals'])])
             cumulative_length += file_data['selfies'].size(0)
             self.cumulative_lengths.append(cumulative_length)
@@ -240,13 +243,17 @@ class SequenceShiftDataset(torch.utils.data.Dataset):
         
         # create sequence input by stacking selfies + assay_vals and 
         out_raw = torch.hstack([selfies, av_sos_eos])
-        
+        inp_pad = F.pad(out_raw, (1, 149 - out_raw.size(0)), value=self.pad_idx)
         # add padding up to 150
-        out_pad = F.pad(out_raw, (0, 150 - out_raw.size(0)), value=self.pad_idx)
+        out_pad = F.pad(av_sos_eos, (1, 149 - av_sos_eos.size(0)), value=self.pad_idx)
+        out_pad[0] = 1
         
         out_shift = torch.hstack([out_pad[1:], torch.tensor([self.pad_idx])])
         
-        return selfies_raw, out_pad, out_shift
+        value_indexes = torch.LongTensor(list(self.tokenizer.value_indexes().values())).to(out_pad.device)
+        inp = inp_pad.masked_fill(torch.isin(inp_pad, value_indexes), self.pad_idx)
+        
+        return inp, out_pad, out_shift
 
 class PropertyValSequenceShiftDataset(torch.utils.data.Dataset):
 

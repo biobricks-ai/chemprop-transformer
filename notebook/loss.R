@@ -8,7 +8,7 @@ batch_skip = if(length(args) > 0) as.integer(args[1]) else 0
 
 draw_plot <- function(last_scheduler_length=0){
   # Read the first three columns of the metrics file
-  data <- read_tsv('metrics/multitask_loss.tsv', col_names = c('type', 'batch', 'loss'), skip =1, show_col_types = FALSE) 
+  data <- read_tsv('/home/yifan/git/ai.biobricks/cvae/metrics/multitask_loss_addtokens2.tsv', col_names = c('type', 'batch', 'loss'), skip =1, show_col_types = FALSE) 
   scheduler_length = length(data |> filter(type == "scheduler") |> pull(loss))
   if(scheduler_length == last_scheduler_length){
     return(last_scheduler_length)
@@ -59,7 +59,7 @@ draw_plot <- function(last_scheduler_length=0){
   # Create the directory and save the plot
   dir.create('notebook/plots', recursive = TRUE, showWarnings = FALSE)
   # ggsave('notebook/plots/loss.svg', plot = plot, width = 12, height = 7, dpi = 300)
-  ggsave('notebook/plots/loss2.png', plot = plot, width = 12, height = 7, dpi = 300)
+  ggsave('notebook/plots/loss_addtokens2.png', plot = plot, width = 12, height = 7, dpi = 300)
   return(scheduler_length)
 }
 
