@@ -3,61 +3,60 @@ import torch
 import cvae.tokenizer, cvae.models.multitask_transformer as mt, cvae.utils
 
 DEVICE = torch.device(f'cuda:0')
-tokenizer = cvae.tokenizer.SelfiesPropertyValTokenizer.load('data2/processed/selfies_property_val_tokenizer')
-model = mt.MultitaskDecoderTransformer.load("brick/mtransform_addtokens2").to(DEVICE)
-
-# EVALUATION FUNCTIONS ===================================================================
-
-assay_indexes = torch.tensor(list(tokenizer.assay_indexes().values()), device=DEVICE)
-index_assays = {v: k for k, v in tokenizer.assay_indexes().items()}
-value_indexes = torch.tensor(list(tokenizer.value_indexes().values()), device= DEVICE)
-index_values = {v: k for k, v in tokenizer.value_indexes().items()}
-
-def extract_ordered_assays(tensor,assay_indexes,index_assays):
-    mask = torch.isin(tensor, assay_indexes)
-    return [index_assays[item.item()] for item in tensor[mask]]
-
-def extract_ordered_values(tensor,value_indexes,index_values):
-    mask = torch.isin(tensor, value_indexes)
-    return [index_values[item.item()] for item in tensor[mask]]
-
-def extract_probabilities_of_one(out, probs, value_indexes):
-    idx = torch.nonzero(torch.isin(out, value_indexes),as_tuple=True)
-    value_probs = probs[idx[0].unsqueeze(1), idx[1].unsqueeze(1), value_indexes]
-    sum_val = value_probs.sum(dim=1, keepdim=True)
-    normalized_value_probs = value_probs / sum_val
-    return normalized_value_probs[:, 1]
-
-def generate_position_tensors(out, value_indexes):
-    num_props = torch.sum(torch.isin(out, value_indexes), dim=1)
-    return torch.cat([torch.arange(size.item()) for size in num_props])
+tokenizer = cvae.tokenizer.SelfiesPropertyValTokenizer.load('data/processed/selfies_property_val_tokenizer')
+model = mt.MultitaskTransformer.load("brick/mtransform2").to(DEVICE)
 
 # EVALUATION LOOP ===================================================================
+assay_indexes = torch.tensor(list(tokenizer.assay_indexes().values()), device=DEVICE)
+value_indexes = torch.tensor(list(tokenizer.value_indexes().values()), device= DEVICE)
 
-tst = mt.SequenceShiftDataset("data2/processed/multitask_tensors/tst", tokenizer)
-tstdl = torch.utils.data.DataLoader(tst, batch_size=2048, shuffle=False)
+tst = mt.SequenceShiftDataset("data/processed/multitask_tensors/tst", tokenizer)
+tstdl = torch.utils.data.DataLoader(tst, batch_size=128, shuffle=False)
 out_df = pd.DataFrame()
+
 
 for j in range(10):
     for i, (inp, teach, out) in tqdm.tqdm(enumerate(tstdl), total=len(tstdl)):
         inp, teach, out = inp.to(DEVICE), teach.to(DEVICE), out.to(DEVICE)
-        x = torch.gt(torch.sum(torch.isin(out, value_indexes),dim=1),9)
-        inp_x,teach_x, out_x = inp[x],teach[x],out[x]
-        prob = torch.softmax(model(inp_x, teach_x),dim=2).detach()
-        probs = extract_probabilities_of_one(out_x, prob, value_indexes).cpu().numpy()
-        assays = extract_ordered_assays(out_x, assay_indexes, index_assays)
-        values = extract_ordered_values(out_x, value_indexes, index_values)
-        position = generate_position_tensors(out_x, value_indexes).cpu().numpy().tolist()
-        batch_df = pd.DataFrame({ 'batch': i, 'assay': assays, 'value': values, 'probs':probs, 'position':position })
-        out_df = pd.concat([out_df, batch_df], ignore_index=True)
         
+        # filter to instances with at least 10 properties
+        # x = torch.gt(torch.sum(torch.isin(out, value_indexes),dim=1),9)
+        # inp,teach, out = inp[x],teach[x],out[x]
+        
+        # get model predictions as a prob
+        prob = torch.softmax(model(inp, teach),dim=2).detach()
+        
+        # get out assays and the assay with the highest prob
+        assays = out[torch.isin(out, assay_indexes)].cpu().numpy()
+        prob_assays = torch.argmax(prob, dim=2)[torch.isin(out, assay_indexes)].cpu().numpy()
+        
+        # get out values and the value with the highest prob and the prob of the `1`` value
+        values = out[torch.isin(out, value_indexes)].cpu().numpy()
+        probmax_vals = torch.argmax(prob, dim=2)[torch.isin(out, value_indexes)].cpu().numpy()
+        rawprobs = prob[torch.isin(out, value_indexes)][:,value_indexes]
+        probs = (rawprobs / rawprobs.sum(dim=1, keepdim=True))[:,1].cpu().numpy()
+        
+        # get position of each value in the out tensor
+        num_props = torch.sum(torch.isin(out, value_indexes), dim=1).cpu().numpy()
+        position = torch.cat([torch.arange(size.item()) for size in num_props]).cpu().numpy()
+        
+        batch_df = pd.DataFrame({ 'batch': i, 'assay': assays, 'value': values, 'probs':probs, 'position':position })
+        batch_df['prob_assays'] = prob_assays
+        batch_df['prob_vals'] = probmax_vals
+        
+        out_df = pd.concat([out_df, batch_df], ignore_index=True)
+
+sum(out_df['assay'] == out_df['prob_assays']) / len(out_df)
+sum(out_df['value'] == out_df['prob_vals']) / len(out_df)
+
 # GENERATE STRATIFIED EVALUATIONS FOR POSITION 0-9 ===============================
 
 assay_metrics = []
 grouped = out_df.groupby(['position','assay'])
-
+import numpy as np
 for (position,assay), group in tqdm.tqdm(grouped):
     y_true, y_pred = group['value'].values, group['probs'].values
+    y_true = np.array([1 if x == 6789 else 0 for x in y_true])
     if sum(y_true==0) < 100 or sum(y_true==1) < 100 : continue
     auc = sklearn.metrics.roc_auc_score(y_true, y_pred)
     acc = sklearn.metrics.accuracy_score(y_true, y_pred > 0.5)
@@ -66,10 +65,12 @@ for (position,assay), group in tqdm.tqdm(grouped):
 
 metrics_df = pd.DataFrame(assay_metrics)
 metrics_df.sort_values(by=['AUC'], inplace=True, ascending=False)
+metrics_df
 metrics_df.to_csv("metrics.csv")
 
 position_df = metrics_df.groupby('position').aggregate({'AUC': 'median', 'ACC': 'median', 'BAC': 'median'})
 position_df.sort_values(by=['AUC'], inplace=True, ascending=False)
+position_df
 position_df.to_csv("position_metrics.csv")
 
 auc, acc, bac = metrics_df['AUC'].median(), metrics_df['ACC'].median(), metrics_df['BAC'].median()
