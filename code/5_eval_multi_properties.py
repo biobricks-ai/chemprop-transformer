@@ -1,16 +1,18 @@
 import pandas as pd, tqdm, sklearn.metrics
 import torch
 import cvae.tokenizer, cvae.models.multitask_transformer as mt, cvae.utils
+import importlib
+importlib.reload(mt)
 
 DEVICE = torch.device(f'cuda:0')
-tokenizer = cvae.tokenizer.SelfiesPropertyValTokenizer.load('data/processed/selfies_property_val_tokenizer')
+tokenizer = cvae.tokenizer.SelfiesPropertyValTokenizer.load('data2/processed/selfies_property_val_tokenizer')
 model = mt.MultitaskTransformer.load("brick/mtransform2").to(DEVICE)
 
 # EVALUATION LOOP ===================================================================
 assay_indexes = torch.tensor(list(tokenizer.assay_indexes().values()), device=DEVICE)
 value_indexes = torch.tensor(list(tokenizer.value_indexes().values()), device= DEVICE)
 
-tst = mt.SequenceShiftDataset("data/processed/multitask_tensors/tst", tokenizer)
+tst = mt.SequenceShiftDataset("data2/processed/multitask_tensors/tst", tokenizer)
 tstdl = torch.utils.data.DataLoader(tst, batch_size=128, shuffle=False)
 out_df = pd.DataFrame()
 
