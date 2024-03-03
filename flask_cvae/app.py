@@ -55,7 +55,7 @@ class Predictor():
     
     def __init__(self):
         self.dburl = 'brick/cvae.sqlite'
-        self.model = mtt.MultitaskDecoderTransformer.load("brick/working_mtt").to(DEVICE)
+        self.model = mtt.MultitaskTransformer.load("brick/working_mtt").to(DEVICE)
         self.tokenizer = spt.SelfiesPropertyValTokenizer.load('brick/selfies_property_val_tokenizer')
         
         conn = sqlite3.connect(self.dburl)

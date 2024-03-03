@@ -25,7 +25,7 @@ class Trainer():
     def __init__(self, model):
         self.model = model
         self.optimizer = optim.AdamW(model.parameters(),lr=1e-3)
-        self.lossfn = cvae.models.multitask_transformer.MultitaskDecoderTransformer.lossfn()
+        self.lossfn = cvae.models.multitask_transformer.MultitaskTransformer.lossfn()
         
         self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, patience=5, factor=0.9, verbose=True, min_lr=1e-6)
         self.scheduler_loss = []
@@ -149,7 +149,7 @@ importlib.reload(mt)
 # model = cvae.models.MultitaskTransformer(tokenizer).to(DEVICE)
 # model = mt.MultitaskDecoderTransformer(tokenizer).to(DEVICE)
 # model = torch.nn.DataParallel(model)
-model = mt.MultitaskDecoderTransformer.load("brick/mtransform_addtokens2").to(DEVICE)
+model = mt.MultitaskTransformer.load("brick/mtransform_addtokens2").to(DEVICE)
 
 trnds = mt.SequenceShiftDataset("data2/processed/multitask_tensors/trn", tokenizer)
 trndl = torch.utils.data.DataLoader(trnds, batch_size=124, shuffle=True, prefetch_factor=100, num_workers=20)
@@ -208,7 +208,7 @@ signal.signal(signal.SIGINT, handle_interrupt)
 importlib.reload(cvae.tokenizer.selfies_property_val_tokenizer)
 tokenizer = cvae.tokenizer.SelfiesPropertyValTokenizer.load('data2/processed/selfies_property_val_tokenizer')
 importlib.reload(cvae.models.multitask_transformer)
-model = mt.MultitaskDecoderTransformer.load("brick/mtransform2").to(DEVICE)
+model = mt.MultitaskTransformer.load("brick/mtransform2").to(DEVICE)
     
 def extract_ordered_assays(tensor):
     assay_indexes = tokenizer.assay_indexes()

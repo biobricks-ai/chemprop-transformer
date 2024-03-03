@@ -37,10 +37,10 @@ for j in range(10):
         probs = (rawprobs / rawprobs.sum(dim=1, keepdim=True))[:,1].cpu().numpy()
         
         # get position of each value in the out tensor
-        num_props = torch.sum(torch.isin(out, value_indexes), dim=1).cpu().numpy()
-        position = torch.cat([torch.arange(size.item()) for size in num_props]).cpu().numpy()
+        num_props = torch.sum(torch.isin(inp, assay_indexes), dim=1).cpu().numpy()
+        # position = torch.cat([torch.arange(size.item()) for size in num_props]).cpu().numpy()
         
-        batch_df = pd.DataFrame({ 'batch': i, 'assay': assays, 'value': values, 'probs':probs, 'position':position })
+        batch_df = pd.DataFrame({ 'batch': i, 'assay': assays, 'value': values, 'probs':probs, 'nprops':num_props })
         batch_df['prob_assays'] = prob_assays
         batch_df['prob_vals'] = probmax_vals
         
@@ -52,7 +52,7 @@ sum(out_df['value'] == out_df['prob_vals']) / len(out_df)
 # GENERATE STRATIFIED EVALUATIONS FOR POSITION 0-9 ===============================
 
 assay_metrics = []
-grouped = out_df.groupby(['position','assay'])
+grouped = out_df.groupby(['nprops','assay'])
 import numpy as np
 for (position,assay), group in tqdm.tqdm(grouped):
     y_true, y_pred = group['value'].values, group['probs'].values
@@ -61,14 +61,17 @@ for (position,assay), group in tqdm.tqdm(grouped):
     auc = sklearn.metrics.roc_auc_score(y_true, y_pred)
     acc = sklearn.metrics.accuracy_score(y_true, y_pred > 0.5)
     bac = sklearn.metrics.balanced_accuracy_score(y_true, y_pred > 0.5)
-    assay_metrics.append({'position': position, 'assay': assay, 'AUC': auc, 'ACC': acc, 'BAC': bac, "NUM_POS": sum(y_true==1), "NUM_NEG": sum(y_true==0)})
+    assay_metrics.append({'nprops': position, 'assay': assay, 'AUC': auc, 'ACC': acc, 'BAC': bac, "NUM_POS": sum(y_true==1), "NUM_NEG": sum(y_true==0)})
 
 metrics_df = pd.DataFrame(assay_metrics)
 metrics_df.sort_values(by=['AUC'], inplace=True, ascending=False)
+metrics_df.aggregate({'AUC': 'median', 'ACC': 'median', 'BAC': 'median'})
 metrics_df
 metrics_df.to_csv("metrics.csv")
 
-position_df = metrics_df.groupby('position').aggregate({'AUC': 'median', 'ACC': 'median', 'BAC': 'median'})
+position_df = metrics_df.groupby('nprops').aggregate({'AUC': 'median', 'ACC': 'median', 'BAC': 'median'})
+# count nprops
+position_df['count'] = metrics_df.groupby('nprops').size()
 position_df.sort_values(by=['AUC'], inplace=True, ascending=False)
 position_df
 position_df.to_csv("position_metrics.csv")

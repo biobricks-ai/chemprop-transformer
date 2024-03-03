@@ -2,8 +2,8 @@
 # TODO:Show how AUC change over time. Median AUC for each position with line chart./Another way, for each property, it improves over time.
 # TODO:what's the difference between 0 to 1, 1 to 2, 2 to 3, take the median difference.
 # TODO: New training for adding inp
-
-import itertools, pathlib, numpy as np, tqdm
+import numpy as np
+import itertools, pathlib, numpy as np, tqdm, inspect
 import torch, torch.utils.data, torch.optim as optim
 import cvae.tokenizer, cvae.utils as utils
 import cvae.models.multitask_transformer as mt 
@@ -11,14 +11,14 @@ import cvae.models.multitask_transformer as mt
 DEVICE = torch.device(f'cuda:0')
 
 # load data ===========================================================================
-tokenizer = cvae.tokenizer.SelfiesPropertyValTokenizer.load('/home/yifan/git/ai.biobricks/cvae/data/processed/selfies_property_val_tokenizer')
+tokenizer = cvae.tokenizer.SelfiesPropertyValTokenizer.load('data/processed/selfies_property_val_tokenizer')
 
 class Trainer():
     
     def __init__(self, model):
         self.model = model.to(DEVICE)
         self.optimizer = optim.AdamW(model.parameters(),lr=1e-3)
-        self.lossfn = mt.MultitaskTransfeormer.lossfn()
+        self.lossfn = mt.MultitaskTransformer.lossfn(ignore_index=tokenizer.pad_idx)
         
         self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, patience=5, factor=0.9, verbose=True, min_lr=1e-6)
         self.scheduler_loss = []
@@ -51,14 +51,39 @@ class Trainer():
     
     def _evaluation_loss(self, valdl):
         self.model.eval()
-        epochloss = []
+        total_loss = 0.0
+        total_acc = 0.0
+        total_count = 0  # Keep track of the total count of values considered for accuracy
+
+        value_indexes = torch.LongTensor(list(tokenizer.value_indexes().values())).to(DEVICE)
+
         for _, (inp, teach, out) in tqdm.tqdm(enumerate(valdl), total=len(valdl)):
             inp, teach, out = inp.to(DEVICE), teach.to(DEVICE), out.to(DEVICE)
-            pred = self.model(inp, teach)
-            loss = self.lossfn(self.model.parameters(), pred.permute(0,2,1), out)
-            epochloss.append(loss.item())
-        
-        return np.mean(epochloss)
+            with torch.no_grad():  # No need to track gradients during evaluation
+                pred = self.model(inp, teach)
+                loss = self.lossfn(self.model.parameters(), pred.permute(0,2,1), out)
+
+                # Compute softmax probabilities
+                prob = torch.softmax(pred, dim=2)
+
+                # Filter out the relevant outputs and predictions for accuracy calculation
+                mask = torch.isin(out, value_indexes)
+                outval = torch.masked_select(out, mask)
+                prbval = torch.masked_select(torch.argmax(prob, dim=2), mask)
+
+                # Compute accuracy for this batch and accumulate
+                acc = torch.sum(outval == prbval).float()
+                total_acc += acc
+                total_count += outval.size(0)  # Update the total count
+
+                # Accumulate loss
+                total_loss += loss.item() * inp.size(0)  # Multiply by batch size to later compute the correct mean
+
+        # Compute mean loss and accuracy
+        mean_loss = total_loss / len(valdl.dataset)
+        mean_acc = total_acc / total_count if total_count > 0 else torch.tensor(0.0)
+
+        return mean_loss, mean_acc.item()  # Return mean accuracy as a Python scalar
                 
     def _epochs_since_improvement(self):
         return len(self.test_losses) - np.argmin(self.test_losses)
@@ -93,7 +118,9 @@ class Trainer():
             
             i, (inp, teach, out) = next(self.trn_iterator)
             inp, teach, out = inp.to(DEVICE), teach.to(DEVICE), out.to(DEVICE)
-            this_batch_size = inp.size(0)
+            # x = torch.gt(torch.sum(torch.isin(out, value_indexes),dim=1),9)
+            # inp, teach, out = inp[x],teach[x],out[x]
+            # this_batch_size = inp.size(0)
             
             mask = torch.rand(inp.shape, device=DEVICE) < self.mask_percent
             mask[:,0] = False # don't mask the first token
@@ -108,40 +135,42 @@ class Trainer():
 
             loss = self._train_batch(inp, teach, out)
             trn_loss.append(loss)
-            utils.write_path(self.metrics_path,f"train\t{i}\t{loss/this_batch_size}\t{self.optimizer.param_groups[0]['lr']:.4f}\n")
+            utils.write_path(self.metrics_path,f"train\t{i}\t{loss}\t{self.optimizer.param_groups[0]['lr']:.4f}\n")
             
             # SCHEDULER UPDATE 
             if (i + 1) % self.scheduler_loss_interval == 0:
                 mean_loss = np.mean(trn_loss)
-                utils.write_path(self.metrics_path,f"scheduler\t{i}\t{mean_loss/this_batch_size}\t{self.optimizer.param_groups[0]['lr']:.4f}\n")
+                utils.write_path(self.metrics_path,f"scheduler\t{i}\t{mean_loss}\t{self.optimizer.param_groups[0]['lr']:.4f}\n")
                 trn_loss = []
+                self.scheduler.step(mean_loss)
             
             # EVALUATION UPDATE
             if (i + 1) % evaluation_interval == 0:
                 epoch += 1
-                eval_loss = self._evaluation_loss(valdl)
-                self.scheduler.step(mean_loss)
+                eval_loss, eval_acc = self._evaluation_loss(valdl)
                 self.test_losses.append(eval_loss)
                 if eval_loss < self.best_test_loss:
                     self.best_test_loss = eval_loss
                     self.model.module.save(self.savepath)
                 
-                utils.write_path(self.metrics_path,f"eval\t{i}\t{self.test_losses[-1]/batch_size}\n")
-                print(f"epoch: {epoch}\t eval_loss: {self.best_test_loss/batch_size:.4f}")
-        
-model = mt.MultitaskDecoderTransformer(tokenizer).to(DEVICE)
+                utils.write_path(self.metrics_path,f"eval\t{i}\t{self.test_losses[-1]}\n")
+                print(f"epoch: {epoch}\teval_loss: {self.best_test_loss:.4f}\teval_acc: {eval_acc:.4f}\tLR: {self.optimizer.param_groups[0]['lr']:.4f}")
+
+import importlib
+importlib.reload(mt)
+model = mt.MultitaskTransformer(tokenizer).to(DEVICE)
 model = torch.nn.DataParallel(model)
 
-trnds = mt.SequenceShiftDataset("data/processed/multitask_tensors/trn", tokenizer.pad_idx, tokenizer.SEP_IDX, tokenizer.END_IDX)
-trndl = torch.utils.data.DataLoader(trnds, batch_size=248, shuffle=True, prefetch_factor=100, num_workers=20)
-valds = mt.SequenceShiftDataset("data/processed/multitask_tensors/tst", tokenizer.pad_idx, tokenizer.SEP_IDX, tokenizer.END_IDX)
-valdl = torch.utils.data.DataLoader(valds, batch_size=248, shuffle=True, prefetch_factor=100, num_workers=20)
+trnds = mt.SequenceShiftDataset("data/processed/multitask_tensors/trn", tokenizer)
+trndl = torch.utils.data.DataLoader(trnds, batch_size=256, shuffle=True, prefetch_factor=100, num_workers=20)
+valds = mt.SequenceShiftDataset("data/processed/multitask_tensors/tst", tokenizer)
+valdl = torch.utils.data.DataLoader(valds, batch_size=256, shuffle=True, prefetch_factor=100, num_workers=20)
 
 trainer = Trainer(model)\
     .set_trn_iterator(itertools.cycle(enumerate(trndl)))\
     .set_validation_dataloader(valdl)\
     .set_mask_percent(0.0)\
-    .set_metrics_file(pathlib.Path("metrics/multitask_loss.tsv"))\
+    .set_metrics_file(pathlib.Path("metrics/multitask_loss.tsv"), overwrite=True)\
     .set_values_mask_flag(False)
 
 trainer.start()
