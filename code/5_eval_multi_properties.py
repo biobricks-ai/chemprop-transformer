@@ -14,14 +14,14 @@ tst = mt.SequenceShiftDataset("data/processed/multitask_tensors/tst", tokenizer)
 tstdl = torch.utils.data.DataLoader(tst, batch_size=128, shuffle=False)
 out_df = pd.DataFrame()
 
-
+inp, teach, out = next(iter(tstdl))
 for j in range(10):
     for i, (inp, teach, out) in tqdm.tqdm(enumerate(tstdl), total=len(tstdl)):
         inp, teach, out = inp.to(DEVICE), teach.to(DEVICE), out.to(DEVICE)
         
         # filter to instances with at least 10 properties
-        # x = torch.gt(torch.sum(torch.isin(out, value_indexes),dim=1),9)
-        # inp,teach, out = inp[x],teach[x],out[x]
+        x = torch.gt(torch.sum(torch.isin(out, value_indexes),dim=1),1)
+        inp,teach, out = inp[x],teach[x],out[x]
         
         # get model predictions as a prob
         prob = torch.softmax(model(inp, teach),dim=2).detach()
@@ -37,10 +37,11 @@ for j in range(10):
         probs = (rawprobs / rawprobs.sum(dim=1, keepdim=True))[:,1].cpu().numpy()
         
         # get position of each value in the out tensor
-        num_props = torch.sum(torch.isin(inp, assay_indexes), dim=1).cpu().numpy()
-        # position = torch.cat([torch.arange(size.item()) for size in num_props]).cpu().numpy()
+        # num_props = torch.sum(torch.isin(inp, assay_indexes), dim=1).cpu().numpy()
+        num_props = torch.sum(torch.isin(out, assay_indexes), dim=1).cpu().numpy()
+        position = torch.cat([torch.arange(size.item()) for size in num_props]).cpu().numpy()
         
-        batch_df = pd.DataFrame({ 'batch': i, 'assay': assays, 'value': values, 'probs':probs, 'nprops':num_props })
+        batch_df = pd.DataFrame({ 'batch': i, 'assay': assays, 'value': values, 'probs':probs, 'nprops':position })
         batch_df['prob_assays'] = prob_assays
         batch_df['prob_vals'] = probmax_vals
         
@@ -57,7 +58,7 @@ import numpy as np
 for (position,assay), group in tqdm.tqdm(grouped):
     y_true, y_pred = group['value'].values, group['probs'].values
     y_true = np.array([1 if x == 6789 else 0 for x in y_true])
-    if sum(y_true==0) < 100 or sum(y_true==1) < 100 : continue
+    if sum(y_true==0) < 10 or sum(y_true==1) < 10 : continue
     auc = sklearn.metrics.roc_auc_score(y_true, y_pred)
     acc = sklearn.metrics.accuracy_score(y_true, y_pred > 0.5)
     bac = sklearn.metrics.balanced_accuracy_score(y_true, y_pred > 0.5)

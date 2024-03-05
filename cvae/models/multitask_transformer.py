@@ -79,9 +79,9 @@ def generate_static_mask(selfies_sz: int, assayval_sz:int) -> torch.Tensor:
     
 class MultitaskTransformer(nn.Module):
     
-    def __init__(self, tokenizer, hdim=256, nhead=16, 
-                 num_layers=3, dim_feedforward=520, 
-                 dropout_rate=0.3):
+    def __init__(self, tokenizer, hdim=512, nhead=8, 
+                 num_layers=6, dim_feedforward=2048, 
+                 dropout_rate=0.1):
         
         super().__init__()
         
@@ -95,13 +95,14 @@ class MultitaskTransformer(nn.Module):
         self.embedding = nn.Embedding(self.vocab_size, self.hdim)
         self.outemb = nn.Embedding(self.vocab_size, self.hdim)
         self.positional_encoding = PositionalEncoding(self.hdim)
+        self.learned_pos_encode = LearnedPositionalEncoding(self.hdim)
         
         encode_args = {"d_model": self.hdim, "nhead": self.nhead, "dim_feedforward": self.dim_feedforward, "dropout": dropout_rate}
-        encode_layer = nn.TransformerEncoderLayer(**encode_args, batch_first=True, norm_first=True)
+        encode_layer = nn.TransformerEncoderLayer(**encode_args, batch_first=True)
         self.encoder = nn.TransformerEncoder(encode_layer, num_layers=num_layers)
         
         decode_args = {"d_model": self.hdim, "nhead": self.nhead, "dim_feedforward": self.dim_feedforward, "dropout": dropout_rate}
-        decode_layer = nn.TransformerDecoderLayer(**decode_args, batch_first=True, norm_first=True)
+        decode_layer = nn.TransformerDecoderLayer(**decode_args, batch_first=True)
         self.decoder = nn.TransformerDecoder(decode_layer, num_layers=num_layers)
         self.decoder_norm = nn.LayerNorm(self.hdim)
         
@@ -117,9 +118,11 @@ class MultitaskTransformer(nn.Module):
         input_embedding = self.positional_encoding(self.embedding(input))
         input_encoding = self.encoder(input_embedding, src_key_padding_mask=memory_mask)
         
-        teach_forcing = self.positional_encoding(self.outemb(teach_forcing))
-        tgt_mask = generate_square_subsequent_mask(teach_forcing.size(1)).to(input.device)
-        tgt_mask[0,1] = 0.
+        teach_forcing = self.learned_pos_encode(self.outemb(teach_forcing))
+        # tgt_mask = generate_square_subsequent_mask(teach_forcing.size(1)).to(input.device)
+        # tgt_mask[0,1] = 0.
+        tgt_mask = generate_custom_subsequent_mask(teach_forcing.size(1)).to(input.device)
+        
         decoded = self.decoder(teach_forcing, input_encoding, tgt_mask=tgt_mask, memory_key_padding_mask=memory_mask)
         decoded = self.decoder_norm(decoded)
         
@@ -128,13 +131,16 @@ class MultitaskTransformer(nn.Module):
         return logits
     
     @staticmethod
-    def lossfn(ignore_index = None, weight_decay=1e-5):
+    def lossfn(ignore_index=None, weight_decay=1e-5, margin=0.01):
         ce_lossfn = nn.CrossEntropyLoss(reduction='mean', ignore_index=ignore_index) if ignore_index is not None else nn.CrossEntropyLoss(reduction='mean')
         def lossfn(parameters, logits, output):
-            ce_loss = ce_lossfn(logits, output)
+            # Clamping the logits within the range [-margin, margin]
+            logits_clamped = torch.clamp(logits, -margin, margin)
+            ce_loss = ce_lossfn(logits_clamped, output)
+            # Uncomment the next line if L2 regularization is needed
             # l2 = sum(p.pow(2.0).sum() for p in parameters if p.requires_grad)
             return ce_loss #+ weight_decay * l2
-        return lossfn    
+        return lossfn
     
     def save(self, path):
         if not isinstance(path, pathlib.Path):
@@ -195,20 +201,57 @@ class SequenceShiftDataset(torch.utils.data.Dataset):
         reshaped_av = assay_vals.reshape(assay_vals.size(0) // 2, 2)
         av_shuffled = reshaped_av[torch.randperm(reshaped_av.size(0)),:].reshape(assay_vals.size(0))
         
-        # truncate to 10 random features
-        av_truncate = av_shuffled[0:2]
+        # truncate to 3 random features
+        av_truncate = av_shuffled[0:6]
         
         # add start and end tokends and pad to 120 length
-        # av_sos_eos = torch.cat([torch.LongTensor([self.sep_idx]), av_truncate, torch.LongTensor([self.end_idx])])
+        av_sos_eos = torch.cat([torch.LongTensor([self.sep_idx]), av_truncate, torch.LongTensor([self.end_idx])])
         
-        # add padding up to 24
-        # out_pad = F.pad(av_truncate, (1, 4 - av_sos_eos.size(0)), value=self.pad_idx)
-        # out_pad[0] = 1
-        out = torch.hstack([av_truncate,torch.tensor([self.pad_idx])])
-        tch = torch.hstack([torch.tensor([self.sep_idx]),out[:-1]])
+        # add padding up to 8
+        out = F.pad(av_sos_eos, (0, 8 - av_sos_eos.size(0)), value=self.pad_idx)
+
+        # out = torch.hstack([av_truncate,torch.tensor([self.pad_idx])])
+        tch = torch.hstack([torch.tensor([1]),out[:-1]])
         
         # inp = selfies_raw # F.pad(selfies, (0, 119 - selfies.size(0)), value=self.pad_idx)
-        inp = torch.hstack([selfies, torch.tensor([self.sep_idx]), av_shuffled[2:6]])
-        pad_inp = F.pad(inp, (0, 126 - inp.size(0)), value=self.pad_idx)
+        # inp = torch.hstack([selfies, torch.tensor([self.sep_idx]), av_shuffled[2:4]])
+        inp = selfies_raw
+        # pad_inp = F.pad(inp, (0, 126 - inp.size(0)), value=self.pad_idx)
         
-        return pad_inp, tch, out
+        return inp, tch, out
+
+class LabelSmoothingCrossEntropySequence(nn.Module):
+    def __init__(self, epsilon_ls=0.1, ignore_index=None):
+        super(LabelSmoothingCrossEntropySequence, self).__init__()
+        self.epsilon_ls = epsilon_ls
+        self.ignore_index = ignore_index
+
+    def forward(self, out, tgt):
+        num_classes = out.size(-1)
+        batch_size, seq_len = tgt.size()
+        fill = self.epsilon_ls / (num_classes - 1)
+        dev = out.device
+        
+        with torch.no_grad():
+            # Create smoothed label
+            smooth_label = torch.full(size=(batch_size, seq_len, num_classes), fill_value=fill, device=dev)
+            tgt = tgt.unsqueeze(-1)  # Add an extra dimension for scatter_
+            smooth_label.scatter_(-1, tgt, 1.0 - self.epsilon_ls)
+
+            if self.ignore_index is not None:
+                # Create a mask for ignoring the index
+                ignore_mask = tgt.eq(self.ignore_index)
+                smooth_label.masked_fill_(ignore_mask, 0.0)
+
+        # Calculate cross-entropy loss with the smoothed labels
+        loss = -smooth_label * F.log_softmax(out, dim=-1)
+        
+        if self.ignore_index is not None:
+            # Apply the ignore mask to the loss
+            loss.masked_fill_(ignore_mask, 0.0)
+
+        loss = loss.sum(dim=-1)  # Sum over classes
+        # Only average over non-ignored elements
+        loss = loss.masked_select(~ignore_mask.squeeze(-1)).mean()
+        
+        return loss

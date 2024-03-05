@@ -1,37 +1,35 @@
-library(ggplot2)
-library(readr)
-library(dplyr)
-library(scales) # For additional scale functions
+pacman::p_load(ggplot2, readr, dplyr, scales, crayon)
 
 args <- commandArgs(trailingOnly = TRUE)
 batch_skip = if(length(args) > 0) as.integer(args[1]) else 0
 
 draw_plot <- function(last_scheduler_length=0){
   # Read the first three columns of the metrics file
-  data <- read_tsv('/home/yifan/git/ai.biobricks/cvae/metrics/multitask_loss_addtokens2.tsv', col_names = c('type', 'batch', 'loss'), skip =1, show_col_types = FALSE) 
-  scheduler_length = length(data |> filter(type == "scheduler") |> pull(loss))
+  data <- read_tsv('metrics/multitask_loss.tsv', col_names = c('type', 'batch', 'loss', 'lr'), skip =1, show_col_types = FALSE) 
+  data <- data |> mutate(type = ifelse(type=="scheduler","sched",type))
+  scheduler_length = length(data |> filter(type == "sched") |> pull(loss))
   if(scheduler_length == last_scheduler_length){
     return(last_scheduler_length)
   }
   data <- data |> mutate(batch = row_number()) 
   data <- data |> filter(batch > batch_skip)
 
-  print('train')
-  data |> filter(type == "train") |> pull(loss) |> tail()
-  data |> filter(type == "train") |> pull(loss) |> min()
+  print_losses <- function(type){
+    tl <- round(data |> filter(type == .env$type) |> pull(loss) |> tail(), 6)
+    mn <- min(tl)
+    msg <- purrr::map_chr(tl, ~ifelse(.x <= mn, crayon::green(.x), crayon::yellow(.x)))
+    cat(type,"\t", msg, '\n')
+  }
 
-  # remove outliers
-  # data <- data |> filter(loss < 50)
-
-  print('eval')
-  print(data |> filter(type == "eval") |> pull(loss) |> tail())
-  print(data |> filter(type == "eval") |> pull(loss) |> min())
-
-  print('scheduler')
-  print(data |> filter(type == "scheduler") |> pull(loss) |> tail())
-  print(data |> filter(type == "scheduler") |> pull(loss) |> min())
+  epoch = data |> tail(1) |> pull(batch)
+  last_lr = data |> tail(1) |> pull(lr)
   
-  data <- data |> filter(type != "train")
+  cat("Epoch:", epoch, "Last learning rate:", last_lr, "\n")
+  print_losses("train")
+  print_losses("sched")
+  if(nrow(data |> filter(type =="eval")) > 0){ print_losses("eval") }
+  
+  data <- data #|> filter(type != "train")
   # Create the plot with a black theme and log scale for the y-axis
   plot <- ggplot(data, aes(x = batch, y=loss, col=type)) + 
     geom_point(aes(color = type),alpha=0.8, size=2) +
