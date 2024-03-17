@@ -11,3 +11,6 @@ metrics.csv
 metrics1.csv
 position_metrics.csv
 position_metrics1.csv
+*.csv
+*.sqlite
+scratch.py
