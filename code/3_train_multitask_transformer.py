@@ -18,18 +18,19 @@ class Trainer():
     
     def __init__(self, model):
         self.model = model.to(DEVICE)
-        self.optimizer = optim.AdamW(model.parameters(),lr=1e-4,betas = (0.9, 0.98), eps=1e-9)
+        self.optimizer = optim.AdamW(model.parameters(),lr=0.1,betas = (0.9, 0.98), eps=1e-9)
         self.lossfn = mt.MultitaskTransformer.lossfn(ignore_index=tokenizer.pad_idx)
         # self.lossfn = mt.LabelSmoothingCrossEntropySequence(ignore_index=tokenizer.pad_idx)
         
         # sched_args = {"patience":2, "factor":0.9, "verbose":True, "min_lr":1e-7, "cooldown":5 }
         # self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, **sched_args)
         
-        T_0 = 10  # Number of epochs for the first cycle
-        T_mult = 1  # A factor that increases T_0 for each subsequent cycle, 1 means constant cycle length
-        eta_min = 1e-7  # Minimum learning rate
-        self.scheduler = lr_scheduler.CosineAnnealingWarmRestarts(self.optimizer, T_0=T_0, T_mult=T_mult, eta_min=eta_min, last_epoch=-1)
-
+        # T_0 = 10  # Number of epochs for the first cycle
+        # T_mult = 2  # A factor that increases T_0 for each subsequent cycle, 1 means constant cycle length
+        # eta_min = 1e-7  # Minimum learning rate
+        # self.scheduler = lr_scheduler.CosineAnnealingWarmRestarts(self.optimizer, T_0=T_0, T_mult=T_mult, eta_min=eta_min, last_epoch=-1)
+        
+        self.scheduler = mt.NoamLR(self.optimizer, model_size=model.module.hdim, warmup_steps=4000)
         
         self.scheduler_loss = []
         self.scheduler_loss_interval = 100
@@ -140,18 +141,18 @@ class Trainer():
 
             loss = self._train_batch(inp, teach, out)
             trn_loss.append(loss)
-            utils.write_path(self.metrics_path,f"train\t{i}\t{loss}\t{self.optimizer.param_groups[0]['lr']:.8f}\n")
+            self.scheduler.step()
+            utils.write_path(self.metrics_path,f"train\t{i}\t{loss}\t{self.optimizer.param_groups[0]['lr']:.12f}\n")
             
             # SCHEDULER UPDATE 
             if (i + 1) % self.scheduler_loss_interval == 0:
                 mean_loss = np.mean(trn_loss)
-                utils.write_path(self.metrics_path,f"scheduler\t{i}\t{mean_loss}\t{self.optimizer.param_groups[0]['lr']:.8f}\n")
+                utils.write_path(self.metrics_path,f"scheduler\t{i}\t{mean_loss}\t{self.optimizer.param_groups[0]['lr']:.12f}\n")
                 trn_loss = []
                 # self.scheduler.step(mean_loss)
             
             # EVALUATION UPDATE
             if (i + 1) % evaluation_interval == 0:
-                self.scheduler.step()
                 epoch += 1
                 eval_loss, eval_acc = self._evaluation_loss(valdl)
                 self.test_losses.append(eval_loss)
@@ -160,7 +161,7 @@ class Trainer():
                     self.model.module.save(self.savepath)
                 
                 utils.write_path(self.metrics_path,f"eval\t{i}\t{self.test_losses[-1]}\n")
-                print(f"epoch: {epoch}\teval_loss: {self.best_test_loss:.4f}\teval_acc: {eval_acc:.4f}\tLR: {self.optimizer.param_groups[0]['lr']:.8f}")
+                print(f"epoch: {epoch}\teval_loss: {self.best_test_loss:.4f}\teval_acc: {eval_acc:.4f}\tLR: {self.optimizer.param_groups[0]['lr']:.12f}")
 
 import importlib
 importlib.reload(mt)
@@ -176,7 +177,7 @@ valdl = torch.utils.data.DataLoader(valds, batch_size=512, shuffle=True, prefetc
 trainer = Trainer(model)\
     .set_trn_iterator(itertools.cycle(enumerate(trndl)))\
     .set_validation_dataloader(valdl)\
-    .set_mask_percent(0.0)\
+    .set_mask_percent(0.1)\
     .set_metrics_file(pathlib.Path("metrics/multitask_loss.tsv"), overwrite=True)
 
 trainer.start()

@@ -65,8 +65,32 @@ perhaps the custom mask we wrote is not working and decoder only model is simple
 | 1.5 | decoder only | 0.7581 | 0.6759 | 0.6759 | | 32.53 | 256 |
 | 1.5.1 | decoder only big | 0.7704 | 0.68 | 0.68 | 31.4 | | 256 |
 The model is quite small right now, and there is no sign of overfitting 
+
 ![Alt text](image-4.png)
 
 So lets make it way bigger.
 
 But, more importantly, we should get toxindex.com working with property categories, which is also finishing right now.
+
+# a new approach
+1. fixed prediction of properties with better mask
+2. when back to encoder-decoder
+3. predicting output of property-value sequence alone
+
+| Model | Description                    | AUC  | LOSS | BATCH        |
+|-------|--------------------------------|------|------|--------------|
+| 1.5   | encoder-decoder pv-only output | 0.55 | 2.45 | 10000 x 128  |
+
+
+>>> position_df
+             AUC       ACC       BAC  count
+nprops                                     
+0       0.821531  0.755916  0.724965     10
+1       0.522480  0.529046  0.508384     71
+
+>>> position_df
+             AUC       ACC       BAC  count
+nprops                                     
+1       0.803105  0.754282  0.699932    532
+0       0.683921  0.643544  0.622061    508
+2       0.663205  0.634772  0.617216    336
