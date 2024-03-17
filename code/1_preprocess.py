@@ -1,7 +1,5 @@
 import os, sys, pathlib, biobricks
 import pyspark.sql, pyspark.sql.functions as F, pyspark.ml.feature
-
-sys.path.insert(0, os.getcwd())
 import cvae.tokenizer.selfies_tokenizer, cvae.utils, cvae.spark_helpers as H
 
 spark = pyspark.sql.SparkSession.builder \
@@ -9,12 +7,12 @@ spark = pyspark.sql.SparkSession.builder \
     .config("spark.driver.memory", "32g") \
     .config("spark.driver.maxResultSize", "20g") \
     .getOrCreate()
-
-pathlib.Path('data/processed').mkdir(parents=True, exist_ok=True)
+outdir = cvae.utils.mk_empty_directory('data/processed', overwrite=True)
 
 # GET CHEMHARMONY SUBSTANCES ===============================================================
 chemharmony = biobricks.assets('chemharmony')
 rawsubstances = spark.read.parquet(chemharmony.substances_parquet).select("sid","source","data")
+#
 
 ## Extract INCHI and SMILES from the data json column. It has a few different names for the same thing
 substances = rawsubstances \
@@ -28,6 +26,7 @@ substances = rawsubstances \
     
 substances = substances.withColumn("smiles", F.coalesce("smiles", H.inchi_to_smiles_udf("inchi")))
 substances = substances.filter(substances.smiles.isNotNull())
+# why here convert from smiles instead of inchi
 substances = substances.withColumn("selfies", H.smiles_to_selfies_udf("smiles"))
 substances = substances.select('sid', 'inchi', 'smiles', 'selfies').distinct()
 substances = substances.filter(substances.selfies.isNotNull())
@@ -39,13 +38,13 @@ substances = tokenizer.transform(substances, 'selfies', 'encoded_selfies')
 tokenizer.save('data/processed/selfies_tokenizer.json')
 substances.write.parquet('data/processed/substances.parquet', mode='overwrite')
 
-spark.read.parquet('data/processed/substances.parquet').count() # 118 197 880
-spark.read.parquet('data/processed/substances.parquet').show(100)
+spark.read.parquet('data2/processed/substances.parquet').count() # 118 197 880
+spark.read.parquet('data2/processed/substances.parquet').show(100)
 
 # GET CHEMARHMONY ACTIVITIES ===========================================================================
 chemharmony = biobricks.assets('chemharmony')
 activities = spark.read.parquet(chemharmony.activities_parquet).select(['smiles','pid','sid','binary_value'])
-substances = spark.read.parquet('data/processed/substances.parquet')
+substances = spark.read.parquet('data2/processed/substances.parquet')
 data = activities.join(substances.select('sid','selfies','encoded_selfies'), 'sid', 'inner')
 data = data.withColumnRenamed('pid', 'assay').withColumnRenamed('binary_value', 'value')
 data = data.orderBy(F.rand(52)) # Randomly shuffle data with seed 52
@@ -57,16 +56,17 @@ data = data.join(valid_assays, 'assay', 'inner')
 
 one_counts = data.filter(F.col('value') == 1).groupBy('assay').count().withColumnRenamed('count', 'one_count')
 valid_assays = one_counts.filter(F.col('one_count') >= 100).select('assay')
-data = data.join(valid_assays, 'assay', 'inner')
+data = data.join(valid_assays, 'assay', 'inner') 
+data.count() # 14 613 322
 
 ## REMOVE ASSAYS WITH A CLASS IMBALANCE GREATER THAN 10% =====================
+# why needed & why pivot_counts_1 all 1s.
 assay_counts = data.groupBy('assay', 'value').count()
-pivot_counts_1 = assay_counts.groupBy('assay').pivot('value').agg(F.count('count')).na.fill(0)
+pivot_counts_1 = assay_counts.groupBy('assay').pivot('value').agg(F.first('count')).na.fill(0)
 pivot_counts_2 = pivot_counts_1.withColumnRenamed("0.0", "count_0").withColumnRenamed("1.0", "count_1")
 assay_counts = pivot_counts_2.withColumn('imbalance', F.abs((F.col('count_0') - F.col('count_1')) / (F.col('count_0') + F.col('count_1'))))
-balanced_assays = assay_counts.filter((F.col('imbalance') <= 0.1) | (F.col('imbalance') >= 0.9)).select('assay')
-data = data.join(balanced_assays, 'assay', 'inner')
-
+balanced_assays = assay_counts.filter((F.col('imbalance') <= 0.9)).select('assay')
+data = data.join(balanced_assays, 'assay', 'inner') # 13954807 
 ## Map assay UUIDs to integers
 indexer = pyspark.ml.feature.StringIndexer(inputCol="assay", outputCol="assay_index")
 data = indexer.fit(data).transform(data)
