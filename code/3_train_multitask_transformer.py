@@ -12,7 +12,7 @@ import cvae.models.multitask_transformer as mt
 DEVICE = torch.device(f'cuda:0')
 
 # load data ===========================================================================
-tokenizer = cvae.tokenizer.SelfiesPropertyValTokenizer.load('data/processed/selfies_property_val_tokenizer')
+tokenizer = cvae.tokenizer.SelfiesPropertyValTokenizer.load('data2/processed/selfies_property_val_tokenizer')
 
 class Trainer():
     

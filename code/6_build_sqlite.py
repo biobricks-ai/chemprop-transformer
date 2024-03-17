@@ -14,11 +14,11 @@ spark = pyspark.sql.SparkSession.builder \
     
 ch = bb.assets('chemharmony')
 
-tokenizer = spt.SelfiesPropertyValTokenizer.load('data/processed/selfies_property_val_tokenizer')
+tokenizer = spt.SelfiesPropertyValTokenizer.load('data2/processed/selfies_property_val_tokenizer')
 
 pytorch_id_to_property_token = lambda x : tokenizer.assay_id_to_token_idx(x)
 pytorch_id_to_property_token_udf = F.udf(pytorch_id_to_property_token, pyspark.sql.types.LongType())
-property_tokens = spark.read.parquet("data/processed/activities.parquet")\
+property_tokens = spark.read.parquet("data2/processed/activities.parquet")\
     .withColumnRenamed('assay','property_id')\
     .withColumnRenamed('assay_index','property_pytorch_index')\
     .withColumn("property_pytorch_index", col("property_pytorch_index").cast("int"))\
@@ -34,6 +34,8 @@ raw_activities = spark.read.parquet(ch.activities_parquet)\
     .join(property_tokens, on='property_id')\
     .withColumn('value_token',binval_to_value_token_udf('binary_value'))\
     .select('source','activity_id','property_id','property_token','substance_id','inchi','smiles','value','binary_value','value_token')
+# list out all the sources in raw_activites
+raw_activities.select('source').distinct().show()
 
 raw_prop_title = spark.read.parquet(ch.property_titles_parquet).withColumnRenamed('pid', 'property_id')
 
@@ -65,7 +67,7 @@ activities = raw_activities\
 
 # WRITE TABLE TO SQLITE =============================================================
 import sqlite3
-conn = sqlite3.connect('data/processed/cvae.sqlite')
+conn = sqlite3.connect('data2/processed/cvae.sqlite')
 
 prop.toPandas().to_sql('property', conn, if_exists='replace', index=False)
 
@@ -78,7 +80,7 @@ activities.toPandas().to_sql('activity', conn, if_exists='replace', index=False)
 conn.close()
 
 ## CREATE INDEXES =============================================================
-conn = sqlite3.connect('data/processed/cvae.sqlite')
+conn = sqlite3.connect('data2/processed/cvae.sqlite')
 cursor = conn.cursor()
 
 # Create indexes
@@ -96,7 +98,7 @@ conn.close()
 
 # MOVE RESULT TO BRICK/cvae.sqlite =============================================================
 import shutil
-shutil.move('data/processed/cvae.sqlite', 'brick/cvae.sqlite')
+shutil.move('data2/processed/cvae.sqlite', 'brick/cvae.sqlite')
 
 # DO A SIMPLE TEST QUERY =============================================================
 # query the graph

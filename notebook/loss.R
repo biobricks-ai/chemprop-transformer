@@ -57,7 +57,7 @@ draw_plot <- function(last_scheduler_length=0){
   # Create the directory and save the plot
   dir.create('notebook/plots', recursive = TRUE, showWarnings = FALSE)
   # ggsave('notebook/plots/loss.svg', plot = plot, width = 12, height = 7, dpi = 300)
-  ggsave('notebook/plots/loss_addtokens2.png', plot = plot, width = 12, height = 7, dpi = 300)
+  ggsave('notebook/plots/loss.png', plot = plot, width = 12, height = 7, dpi = 300)
   return(scheduler_length)
 }
 

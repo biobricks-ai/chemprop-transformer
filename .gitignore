@@ -13,4 +13,5 @@ position_metrics.csv
 position_metrics1.csv
 *.csv
 *.sqlite
+*.png
 scratch.py
