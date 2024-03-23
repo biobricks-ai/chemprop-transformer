@@ -1,35 +1,20 @@
-# # TODO: make a good histogram of the AUCs for each property.
-# TODO:Show how AUC change over time. Median AUC for each position with line chart./Another way, for each property, it improves over time.
-# TODO:what's the difference between 0 to 1, 1 to 2, 2 to 3, take the median difference.
-# TODO: New training for adding inp
 import numpy as np
-import itertools, pathlib, numpy as np, tqdm, inspect
+import itertools, pathlib, numpy as np, tqdm
 import torch, torch.utils.data, torch.optim as optim
-from torch.optim import lr_scheduler
 import cvae.tokenizer, cvae.utils as utils
 import cvae.models.multitask_transformer as mt 
+from pydantic import BaseModel
 
 DEVICE = torch.device(f'cuda:0')
+tokenizer = cvae.tokenizer.SelfiesPropertyValTokenizer.load('brick/selfies_property_val_tokenizer')
 
-# load data ===========================================================================
-tokenizer = cvae.tokenizer.SelfiesPropertyValTokenizer.load('data2/processed/selfies_property_val_tokenizer')
-
-class Trainer():
+class Trainer(BaseModel):
     
     def __init__(self, model):
         self.model = model.to(DEVICE)
         self.optimizer = optim.AdamW(model.parameters(),lr=0.1,betas = (0.9, 0.98), eps=1e-9)
         self.lossfn = mt.MultitaskTransformer.lossfn(ignore_index=tokenizer.pad_idx)
-        # self.lossfn = mt.LabelSmoothingCrossEntropySequence(ignore_index=tokenizer.pad_idx)
-        
-        # sched_args = {"patience":2, "factor":0.9, "verbose":True, "min_lr":1e-7, "cooldown":5 }
-        # self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, **sched_args)
-        
-        # T_0 = 10  # Number of epochs for the first cycle
-        # T_mult = 2  # A factor that increases T_0 for each subsequent cycle, 1 means constant cycle length
-        # eta_min = 1e-7  # Minimum learning rate
-        # self.scheduler = lr_scheduler.CosineAnnealingWarmRestarts(self.optimizer, T_0=T_0, T_mult=T_mult, eta_min=eta_min, last_epoch=-1)
-        
+     
         self.scheduler = mt.NoamLR(self.optimizer, model_size=model.module.hdim, warmup_steps=4000)
         
         self.scheduler_loss = []
@@ -38,6 +23,10 @@ class Trainer():
         self.savepath = "brick/mtransform2"
         self.test_losses = [np.inf]
         self.best_test_loss = np.inf
+    
+    def set_model_savepath(self, savepath):
+        self.savepath = savepath
+        return self
     
     def set_trn_iterator(self, iterator):
         self.trn_iterator = iterator
@@ -103,7 +92,6 @@ class Trainer():
         # outputs and loss
         pred = self.model(inp, teach)
         loss = self.lossfn(self.model.parameters(), pred.permute(0,2,1), out)
-        # loss = self.lossfn(pred,out)
         
         # update model
         loss.backward()
@@ -127,9 +115,6 @@ class Trainer():
             
             i, (inp, teach, out) = next(self.trn_iterator)
             inp, teach, out = inp.to(DEVICE), teach.to(DEVICE), out.to(DEVICE)
-            # x = torch.gt(torch.sum(torch.isin(out, value_indexes),dim=1),9)
-            # inp, teach, out = inp[x],teach[x],out[x]
-            # this_batch_size = inp.size(0)
             
             mask = torch.rand(inp.shape, device=DEVICE) < self.mask_percent
             mask[:,0] = False # don't mask the first token
@@ -149,7 +134,6 @@ class Trainer():
                 mean_loss = np.mean(trn_loss)
                 utils.write_path(self.metrics_path,f"scheduler\t{i}\t{mean_loss}\t{self.optimizer.param_groups[0]['lr']:.12f}\n")
                 trn_loss = []
-                # self.scheduler.step(mean_loss)
             
             # EVALUATION UPDATE
             if (i + 1) % evaluation_interval == 0:
@@ -163,21 +147,19 @@ class Trainer():
                 utils.write_path(self.metrics_path,f"eval\t{i}\t{self.test_losses[-1]}\n")
                 print(f"epoch: {epoch}\teval_loss: {self.best_test_loss:.4f}\teval_acc: {eval_acc:.4f}\tLR: {self.optimizer.param_groups[0]['lr']:.12f}")
 
-import importlib
-importlib.reload(mt)
 model = mt.MultitaskTransformer(tokenizer).to(DEVICE)
-# model = mt.MultitaskTransformer.load("brick/mtransform2")
 model = torch.nn.DataParallel(model)
 
-trnds = mt.SequenceShiftDataset("data/processed/multitask_tensors/trn", tokenizer)
+trnds = mt.SequenceShiftDataset("data/tensordataset/multitask_tensors/trn", tokenizer)
 trndl = torch.utils.data.DataLoader(trnds, batch_size=512, shuffle=True, prefetch_factor=100, num_workers=20)
-valds = mt.SequenceShiftDataset("data/processed/multitask_tensors/tst", tokenizer)
+valds = mt.SequenceShiftDataset("data/tensordataset/multitask_tensors/tst", tokenizer)
 valdl = torch.utils.data.DataLoader(valds, batch_size=512, shuffle=True, prefetch_factor=100, num_workers=20)
 
 trainer = Trainer(model)\
     .set_trn_iterator(itertools.cycle(enumerate(trndl)))\
     .set_validation_dataloader(valdl)\
     .set_mask_percent(0.1)\
-    .set_metrics_file(pathlib.Path("metrics/multitask_loss.tsv"), overwrite=True)
+    .set_metrics_file(pathlib.Path("metrics/multitask_loss.tsv"), overwrite=True)\
+    .set_model_savepath("brick/mtransform2")
 
 trainer.start()

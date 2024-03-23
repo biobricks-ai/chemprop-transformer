@@ -12,3 +12,67 @@ stages:
       hash: md5
       md5: 58bd399af35a653d49521bf0f6e7388a
       size: 7417442304
+  preprocess:
+    cmd: python code/1_preprocess.py
+    deps:
+    - path: code/1_preprocess.py
+      hash: md5
+      md5: 0d2d01f7af376a61996a7b3a8dbf2fca
+      size: 4572
+    outs:
+    - path: data/processed/
+      hash: md5
+      md5: 115c3dd69deb0583d60f202ba41459f1.dir
+      size: 30763895793
+      nfiles: 805
+  build_tensordataset:
+    cmd: python code/2_build_tensordataset.py
+    deps:
+    - path: code/2_build_tensordataset.py
+      hash: md5
+      md5: e31dec81c75e3c7f2c7197503d55d6aa
+      size: 4914
+    - path: data/processed/
+      hash: md5
+      md5: 115c3dd69deb0583d60f202ba41459f1.dir
+      size: 30763895793
+      nfiles: 805
+    outs:
+    - path: brick/selfies_property_val_tokenizer/
+      hash: md5
+      md5: baa3dbed0ead82714f151e499628559d.dir
+      size: 83833
+      nfiles: 2
+    - path: data/tensordataset/
+      hash: md5
+      md5: c814fa902a7e7db0af1a8da4bb4c6c42.dir
+      size: 138654084221
+      nfiles: 418
+  train:
+    cmd: python code/3_train_multitask_transformer.py
+    deps:
+    - path: brick/selfies_property_val_tokenizer/
+      hash: md5
+      md5: baa3dbed0ead82714f151e499628559d.dir
+      size: 83833
+      nfiles: 2
+    - path: code/3_train_multitask_transformer.py
+      hash: md5
+      md5: b8cb14f329fee33fa3937e6411222242
+      size: 6960
+    - path: data/processed/
+      hash: md5
+      md5: 115c3dd69deb0583d60f202ba41459f1.dir
+      size: 30763895793
+      nfiles: 805
+    - path: data/tensordataset/
+      hash: md5
+      md5: c814fa902a7e7db0af1a8da4bb4c6c42.dir
+      size: 138654084221
+      nfiles: 418
+    outs:
+    - path: brick/mtransform2
+      hash: md5
+      md5: 9c7b61fe850674958a421043d663ca8d.dir
+      size: 224453868
+      nfiles: 3

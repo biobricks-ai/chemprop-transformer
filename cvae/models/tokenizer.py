@@ -1,5 +1,6 @@
 from rdkit import Chem, DataStructs
 from rdkit.Chem import AllChem
+from rdkit import RDLogger
 import torch, numpy as np
 
 TOKEN_SOS = "^"
@@ -107,6 +108,7 @@ def valid_smiles(smiles):
 
       
 def smiles_to_morgan_fingerprint(smiles, radius=2, nBits=2048):
+    RDLogger.DisableLog('rdApp.*') # Disable RDKit warnings
     mol = Chem.MolFromSmiles(smiles)
     
     if mol is None:

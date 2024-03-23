@@ -25,3 +25,6 @@ pip install matplotlib
 pip install dask
 pip install "dask[distributed]"
 pip install selfies==2.1.1
+
+# add ./ to the conda python path so that ./cvae can be imported
+conda env config vars set PYTHONPATH="./:$PYTHONPATH" -n cvae

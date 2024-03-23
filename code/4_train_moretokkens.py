@@ -19,7 +19,7 @@ signal.signal(signal.SIGINT, handle_interrupt)
 
 # load data ===========================================================================
 importlib.reload(cvae.tokenizer.selfies_property_val_tokenizer)
-tokenizer = cvae.tokenizer.SelfiesPropertyValTokenizer.load('data2/processed/selfies_property_val_tokenizer')
+tokenizer = cvae.tokenizer.SelfiesPropertyValTokenizer.load('data/processed/selfies_property_val_tokenizer')
 class Trainer():
     
     def __init__(self, model):
@@ -151,9 +151,9 @@ importlib.reload(mt)
 # model = torch.nn.DataParallel(model)
 model = mt.MultitaskTransformer.load("brick/mtransform_addtokens2").to(DEVICE)
 
-trnds = mt.SequenceShiftDataset("data2/processed/multitask_tensors/trn", tokenizer)
+trnds = mt.SequenceShiftDataset("data/processed/multitask_tensors/trn", tokenizer)
 trndl = torch.utils.data.DataLoader(trnds, batch_size=124, shuffle=True, prefetch_factor=100, num_workers=20)
-valds = mt.SequenceShiftDataset("data2/processed/multitask_tensors/tst", tokenizer)
+valds = mt.SequenceShiftDataset("data/processed/multitask_tensors/tst", tokenizer)
 valdl = torch.utils.data.DataLoader(valds, batch_size=124, shuffle=True, prefetch_factor=100, num_workers=20)
 # (i,o) = valds[0]
 
@@ -169,21 +169,6 @@ trainer = Trainer(model)\
     .set_values_mask_flag(False)
 
 trainer.start()
-
-
-
-# trn_singletask = mt.SequenceShiftDataset("data2/processed/single_task_tensors/trn", tokenizer.pad_idx, tokenizer.SEP_IDX, tokenizer.END_IDX)
-# trn_singletask_dl = torch.utils.data.DataLoader(trn_singletask, batch_size=248, shuffle=True, prefetch_factor=100, num_workers=20)
-
-# # len(trnds) / 1024 = 1225
-# trainer = Trainer(model)\
-#     .set_trn_iterator(itertools.cycle(enumerate(trn_singletask_dl)))\
-#     .set_evaluation_interval(((len(trn_singletask)-1) // 248) // 2)\
-#     .set_validation_dataloader(valdl)\
-#     .set_mask_percent(0.0)\
-#     .set_metrics_file(pathlib.Path("metrics/multitask_loss.tsv"))\
-#     .set_values_mask_flag(False)
-# trainer.start()
 
 # EVALUATE ===================================================================================================
 import pandas as pd
@@ -206,7 +191,7 @@ def handle_interrupt(signal_number, frame):
 signal.signal(signal.SIGINT, handle_interrupt)
 
 importlib.reload(cvae.tokenizer.selfies_property_val_tokenizer)
-tokenizer = cvae.tokenizer.SelfiesPropertyValTokenizer.load('data2/processed/selfies_property_val_tokenizer')
+tokenizer = cvae.tokenizer.SelfiesPropertyValTokenizer.load('data/processed/selfies_property_val_tokenizer')
 importlib.reload(cvae.models.multitask_transformer)
 model = mt.MultitaskTransformer.load("brick/mtransform2").to(DEVICE)
     

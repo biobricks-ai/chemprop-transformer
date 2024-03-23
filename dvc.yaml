@@ -7,29 +7,31 @@ stages:
   #   outs:
   #   - .dvc/cache
 
-  # download:
-  #   cmd: python code/1_Download.py
-  #   deps:
-  #   - code/1_Download.py
-  #   outs:
-  #   - data/raw
+  preprocess:
+    cmd: python code/1_preprocess.py
+    deps:
+    - code/1_preprocess.py
+    outs:
+    - data/processed/
 
-  # preprocessing:
-  #   cmd: python code/2_Preprocess.py
-  #   deps:
-  #   - code/2_Preprocess.py
-  #   - data/raw
-  #   outs:
-  #   - data/processed
+  build_tensordataset:
+    cmd: python code/2_build_tensordataset.py
+    deps:
+    - code/2_build_tensordataset.py
+    - data/processed/
+    outs:
+    - data/tensordataset/
+    - brick/selfies_property_val_tokenizer/
 
-  # train:
-  #   cmd: python code/3_Train.py
-  #   deps:
-  #   - code/3_Train.py
-  #   - data/processed
-  #   outs:
-  #   - metrics/train
-  #   - models/train
+  train:
+    cmd: python code/3_train_multitask_transformer.py
+    deps:
+    - code/3_train_multitask_transformer.py
+    - data/processed/
+    - data/tensordataset/
+    - brick/selfies_property_val_tokenizer/
+    outs:
+    - brick/mtransform2
 
   # test:
   #   cmd: python code/4_Test.py

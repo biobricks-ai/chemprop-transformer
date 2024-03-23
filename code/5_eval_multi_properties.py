@@ -1,3 +1,4 @@
+import numpy as np
 import pandas as pd, tqdm, sklearn.metrics
 import torch
 import cvae.tokenizer, cvae.models.multitask_transformer as mt, cvae.utils
@@ -5,14 +6,14 @@ import importlib
 importlib.reload(mt)
 
 DEVICE = torch.device(f'cuda:0')
-tokenizer = cvae.tokenizer.SelfiesPropertyValTokenizer.load('data2/processed/selfies_property_val_tokenizer')
+tokenizer = cvae.tokenizer.SelfiesPropertyValTokenizer.load('data/processed/selfies_property_val_tokenizer')
 model = mt.MultitaskTransformer.load("brick/mtransform2").to(DEVICE)
 
 # EVALUATION LOOP ===================================================================
 assay_indexes = torch.tensor(list(tokenizer.assay_indexes().values()), device=DEVICE)
 value_indexes = torch.tensor(list(tokenizer.value_indexes().values()), device= DEVICE)
 
-tst = mt.SequenceShiftDataset("data2/processed/multitask_tensors/tst", tokenizer)
+tst = mt.SequenceShiftDataset("data/tensordataset/multitask_tensors/tst", tokenizer)
 tstdl = torch.utils.data.DataLoader(tst, batch_size=128, shuffle=False)
 out_df = pd.DataFrame()
 
@@ -56,10 +57,10 @@ sum(out_df['value'] == out_df['prob_vals']) / len(out_df)
 
 assay_metrics = []
 grouped = out_df.groupby(['nprops','assay'])
-import numpy as np
+# (position, assay), group = next(iter(grouped))
 for (position,assay), group in tqdm.tqdm(grouped):
     y_true, y_pred = group['value'].values, group['probs'].values
-    y_true = np.array([1 if x == 6789 else 0 for x in y_true])
+    y_true = np.array([1 if x == 6097 else 0 for x in y_true])
     if sum(y_true==0) < 10 or sum(y_true==1) < 10 : continue
     auc = sklearn.metrics.roc_auc_score(y_true, y_pred)
     acc = sklearn.metrics.accuracy_score(y_true, y_pred > 0.5)
@@ -82,66 +83,25 @@ position_df.to_csv("position_metrics.csv")
 
 auc, acc, bac = metrics_df['AUC'].median(), metrics_df['ACC'].median(), metrics_df['BAC'].median()
 print(f"Metrics over position:\tAUC: {auc:.4f}\tACC: {acc:.4f}\tBAC: {bac:.4f}")
+
 # ==========================================================
 import pandas as pd
 
-# Define the threshold for low AUC
 low_auc_threshold = 0.5  # Adjust this threshold as needed
-
-# Identify assays in metrics_df with AUC below the threshold
 low_auc_assays = metrics_df[metrics_df['AUC'] < low_auc_threshold]['assay'].unique()
-
-# Filter out_df for rows where 'prob_assays' matches the low AUC assays
 low_auc_out_df = out_df[out_df['prob_assays'].isin(low_auc_assays)]
-
-# Extract unique 'prob_assays' from the filtered DataFrame
 unique_low_auc_prob_assays = low_auc_out_df['prob_assays'].unique()
-
-# Print or use the unique list of 'prob_assays' as needed
 print(unique_low_auc_prob_assays)
-
-
-
-
-
-import pandas as pd
-import numpy as np
-import sklearn.metrics
-
-# Assume metrics_df is already created and populated as per your model evaluation
-
-# Define a threshold for low AUC
-low_auc_threshold = 0.5  # This is an example threshold, adjust based on your needs
-
-# Filter for low AUCs
-low_auc_df = metrics_df[metrics_df['AUC'] < low_auc_threshold]
-
-# Analysis of Low AUC Assays
-# This can vary depending on your specific requirements. 
-# As an example, let's find the unique assays with low AUCs:
-unique_low_auc_assays = low_auc_df['assay'].unique()
-
-# You can also perform more detailed analysis or aggregations as needed
-# For example, getting a count of low AUC assays
-low_auc_assay_counts = low_auc_df['assay'].value_counts()
-
-print("Unique assays with low AUCs:", unique_low_auc_assays)
-print("Counts of low AUC assays:", low_auc_assay_counts)
-
-
-
-
 
 #===========================================
 
 from matplotlib import pyplot as plt
 
-    # Set the style
 plt.style.use('dark_background')
 
 # Create the figure and the histogram
 plt.figure(figsize=(20, 10))
-n, bins, patches = plt.hist(metrics_df['AUC'], bins=20, alpha=0.5, edgecolor='white', linewidth=1.5, color='turquoise')
+n, bins, patches = plt.hist(metrics_df['AUC'], bins=50, alpha=0.5, edgecolor='white', linewidth=1, color='turquoise')
 
 # Add a line for the median AUC value
 plt.axvline(auc, color='yellow', linestyle='dashed', linewidth=2)
@@ -175,10 +135,6 @@ plt.tight_layout()
 # Save the plot to a file
 plt.savefig('notebook/plots/multitask_transformer_metrics.png', facecolor='black')
 
-
-
-# Display the plot
-plt.show()
 
 #===========================================
 # Filter metrics_df for position 9
