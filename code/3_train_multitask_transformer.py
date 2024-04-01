@@ -8,7 +8,7 @@ from pydantic import BaseModel
 DEVICE = torch.device(f'cuda:0')
 tokenizer = cvae.tokenizer.SelfiesPropertyValTokenizer.load('brick/selfies_property_val_tokenizer')
 
-class Trainer(BaseModel):
+class Trainer():
     
     def __init__(self, model):
         self.model = model.to(DEVICE)
@@ -147,13 +147,14 @@ class Trainer(BaseModel):
                 utils.write_path(self.metrics_path,f"eval\t{i}\t{self.test_losses[-1]}\n")
                 print(f"epoch: {epoch}\teval_loss: {self.best_test_loss:.4f}\teval_acc: {eval_acc:.4f}\tLR: {self.optimizer.param_groups[0]['lr']:.12f}")
 
-model = mt.MultitaskTransformer(tokenizer).to(DEVICE)
+# model = mt.MultitaskTransformer(tokenizer).to(DEVICE)
+model = mt.MultitaskTransformer.load("brick/mtransform2").to(DEVICE)
 model = torch.nn.DataParallel(model)
 
 trnds = mt.SequenceShiftDataset("data/tensordataset/multitask_tensors/trn", tokenizer)
-trndl = torch.utils.data.DataLoader(trnds, batch_size=512, shuffle=True, prefetch_factor=100, num_workers=20)
+trndl = torch.utils.data.DataLoader(trnds, batch_size=256, shuffle=True, prefetch_factor=100, num_workers=20)
 valds = mt.SequenceShiftDataset("data/tensordataset/multitask_tensors/tst", tokenizer)
-valdl = torch.utils.data.DataLoader(valds, batch_size=512, shuffle=True, prefetch_factor=100, num_workers=20)
+valdl = torch.utils.data.DataLoader(valds, batch_size=256, shuffle=True, prefetch_factor=100, num_workers=20)
 
 trainer = Trainer(model)\
     .set_trn_iterator(itertools.cycle(enumerate(trndl)))\

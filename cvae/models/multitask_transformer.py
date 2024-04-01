@@ -79,8 +79,8 @@ def generate_static_mask(selfies_sz: int, assayval_sz:int) -> torch.Tensor:
     
 class MultitaskTransformer(nn.Module):
     
-    def __init__(self, tokenizer, hdim=512, nhead=8, 
-                 num_layers=6, dim_feedforward=2048, 
+    def __init__(self, tokenizer, hdim=1024, nhead=16, 
+                 num_layers=12, dim_feedforward=2048, 
                  dropout_rate=0.1):
         
         super().__init__()
@@ -107,7 +107,11 @@ class MultitaskTransformer(nn.Module):
         self.decoder_norm = nn.LayerNorm(self.hdim)
         
         self.classification_layers = nn.Sequential(
-            nn.Linear(self.hdim, self.vocab_size)
+            nn.Linear(self.hdim, self.dim_feedforward),  # First layer upscales to dim_feedforward
+            nn.ReLU(),  # Nonlinear activation
+            nn.Linear(self.dim_feedforward, self.dim_feedforward // 2),  # Further processing layer
+            nn.ReLU(),  # Nonlinear activation
+            nn.Linear(self.dim_feedforward // 2, self.vocab_size)  # Final layer to match output size
         )
 
 
@@ -199,13 +203,14 @@ class SequenceShiftDataset(torch.utils.data.Dataset):
         av_shuffled = reshaped_av[torch.randperm(reshaped_av.size(0)),:].reshape(assay_vals.size(0))
         
         # truncate to 3 random features
-        av_truncate = av_shuffled[0:6]
+        n_features = 10
+        av_truncate = av_shuffled[0:(n_features*2)]
         
         # add start and end tokends and pad to 120 length
         av_sos_eos = torch.cat([torch.LongTensor([self.sep_idx]), av_truncate, torch.LongTensor([self.end_idx])])
         
-        # add padding up to 8
-        out = F.pad(av_sos_eos, (0, 8 - av_sos_eos.size(0)), value=self.pad_idx)
+        # add padding up to n_features*2+2
+        out = F.pad(av_sos_eos, (0, (n_features*2+2) - av_sos_eos.size(0)), value=self.pad_idx)
 
         # out = torch.hstack([av_truncate,torch.tensor([self.pad_idx])])
         tch = torch.hstack([torch.tensor([1]),out[:-1]])
