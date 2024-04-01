@@ -58,8 +58,8 @@ stages:
       nfiles: 2
     - path: code/3_train_multitask_transformer.py
       hash: md5
-      md5: b8cb14f329fee33fa3937e6411222242
-      size: 6960
+      md5: 2c94c97d2fbc6263fa5180831f8be6af
+      size: 7022
     - path: data/processed/
       hash: md5
       md5: 115c3dd69deb0583d60f202ba41459f1.dir
@@ -73,6 +73,6 @@ stages:
     outs:
     - path: brick/mtransform2
       hash: md5
-      md5: 9c7b61fe850674958a421043d663ca8d.dir
-      size: 224453868
+      md5: 031eec48a6504ba4d33d04fd218dead6.dir
+      size: 1120489172
       nfiles: 3
