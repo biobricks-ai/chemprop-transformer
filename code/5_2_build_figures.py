@@ -1,4 +1,5 @@
 import matplotlib.pyplot as plt, pandas as pd, seaborn as sns
+import random
 
 # SETUP =================================================================================
 df = pd.read_csv('data/metrics/multitask_metrics.csv')
@@ -37,25 +38,26 @@ auc_histogram(df)
 # AUC BY POSITION =======================================================================
 ## select assays that appear with all values of nprops
 
-# AUC DIFFERENCE BY POSITION ============================================================
-assays = df.groupby('assay').filter(lambda x: x['nprops'].nunique() == 10)['assay'].unique()
+assays = df.groupby('assay').filter(lambda x: x['nprops'].nunique() == 5)['assay'].unique()
 posdf = df[df['assay'].isin(assays)]
 posdf.sort_values(by=['assay', 'nprops'], inplace=True)
 
-# Correctly calculate the AUC difference compared to nprop = 0 for each assay
-auc_at_zero = posdf[posdf['nprops'] == 0].set_index('assay')['AUC']
-auc_at_zero = auc_at_zero.filter(lambda x: x["AUC"] < 0.8)
-posdf['AUC_DIFF'] = posdf.apply(lambda row: row['AUC'] - auc_at_zero[row['assay']], axis=1)
+# Get the median AUC by nprops
+median_df = posdf.groupby(['nprops']).agg({'AUC': 'median'}).reset_index()
 
-# Filter out nprop = 0 since we're interested in the differences for >0
-plotdf = posdf[['assay', 'nprops', 'AUC_DIFF']]
+# Randomly select up to 1000 assays
+sampled_assays = random.sample(list(assays), min(1000, len(assays)))
+sampled_df = posdf[posdf['assay'].isin(sampled_assays)]
 
-# Provided plotting code with minor adjustments for clarity
 plt.style.use('dark_background')
 plt.figure(figsize=(12, 6))
 
-# Creating the violin plot
-sns.violinplot(data=plotdf, x='nprops', y='AUC_DIFF', palette='coolwarm', inner='quartile')
+# Create line plot for randomly selected assays
+sns.lineplot(data=sampled_df, x='nprops', y='AUC', units='assay', estimator=None, linewidth=0.5, alpha=0.3, color='gray')
+
+# Create line plot for median AUC with points
+sns.lineplot(data=median_df, x='nprops', y='AUC', linewidth=3, color='orange', label='Median AUC', marker='o', markersize=8)
+sns.pointplot(data=median_df, x='nprops', y='AUC', color='orange')
 
 # Adding labels and title
 plt.title('Distribution of AUC Differences by Nprops Compared to Nprop=0', fontsize=18, color='white')
@@ -63,46 +65,17 @@ plt.xlabel('Nprops', fontsize=14, color='white')
 plt.ylabel('AUC Difference from Nprop=0', fontsize=14, color='white')
 
 # Customizing ticks and adding a horizontal line at 0
-plt.xticks(fontsize=12, color='white')
+plt.xticks(range(5), fontsize=12, color='white')
 plt.yticks(fontsize=12, color='white')
 plt.axhline(0, color='white', linestyle='--', linewidth=1)
-
 plt.grid(color='gray', linestyle='dashed', linewidth=0.5, alpha=0.5)
+
+# only show from 0 to 4 (don't add any margin)
+plt.xlim(0, 4)
+plt.ylim(0.6,1.0)
+
+plt.legend(fontsize=12)
 plt.tight_layout()
 
 # Assuming the save path matches your setup
 plt.savefig('notebook/plots/auc_diff_by_nprops.png', facecolor='black')
-
-
-# SCRATCH ===============================================================================
-
-assays = df.groupby('assay').filter(lambda x: x['nprops'].nunique() == 10)['assay'].unique()
-posdf = df[df['assay'].isin(assays)]
-iloss = posdf[posdf['nprops'] == 0].set_index('assay')['cross_entropy_loss']
-
-# Calculate the improvement score
-posdf['Improvement_Score'] = posdf.apply(lambda row: 100 * (iloss[row['assay']] - row['cross_entropy_loss']) / iloss[row['assay']], axis=1)
-
-posdf.groupby('nprops').agg({'Improvement_Score': 'mean'})
-plotdf = posdf[posdf['nprops'] > 0][['assay', 'nprops', 'cross_entropy_loss']]
-
-# Plotting
-plt.style.use('dark_background')
-plt.figure(figsize=(12, 6))
-sns.violinplot(data=plotdf, x='nprops', y='cross_entropy_loss', inner='quartile', cut=0)
-
-# 'cut=0' limits the violin plot to the range of the observed data, potentially making it easier to focus on the main distribution without extreme tails.
-
-# Adding labels and title
-plt.title('Improvement Score by Nprops', fontsize=18, color='white')
-plt.xlabel('Nprops', fontsize=14, color='white')
-plt.ylabel('Improvement Score (%)', fontsize=14, color='white')
-
-# Enhancing visibility
-plt.xticks(fontsize=12, color='white')
-plt.yticks(fontsize=12, color='white')
-plt.axhline(0, color='white', linestyle='--', linewidth=1)
-plt.grid(color='gray', linestyle='dashed', linewidth=0.5, alpha=0.5)
-
-plt.tight_layout()
-plt.savefig('notebook/plots/improvement_score_by_nprops.png', facecolor='black')
