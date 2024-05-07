@@ -28,3 +28,26 @@ stages:
       md5: c19daf13715ded4e538e83a478143e0e.dir
       size: 116879082
       nfiles: 3
+  build_tensordataset:
+    cmd: python code/2_build_tensordataset.py
+    deps:
+    - path: code/2_build_tensordataset.py
+      hash: md5
+      md5: e31dec81c75e3c7f2c7197503d55d6aa
+      size: 4914
+    - path: data/processed/
+      hash: md5
+      md5: d6ff665df72e217c5ece373f8574fb77.dir
+      size: 30783005052
+      nfiles: 805
+    outs:
+    - path: brick/selfies_property_val_tokenizer/
+      hash: md5
+      md5: eacb612169dffdc6d0571dbbf59bf6e2.dir
+      size: 83833
+      nfiles: 2
+    - path: data/tensordataset/
+      hash: md5
+      md5: c99d9c8a08821fdc0e16a1817f5c8578.dir
+      size: 138747790269
+      nfiles: 418
