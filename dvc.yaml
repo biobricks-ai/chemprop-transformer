@@ -31,7 +31,7 @@ stages:
     - data/tensordataset/
     - brick/selfies_property_val_tokenizer/
     outs:
-    - brick/mtransform2
+    - brick/moe
 
   # test:
   #   cmd: python code/4_Test.py

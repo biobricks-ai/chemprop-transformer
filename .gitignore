@@ -14,3 +14,4 @@ position_metrics1.csv
 *.sqlite
 *.png
 scratch.py
+notes.md

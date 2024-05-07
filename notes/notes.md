@@ -32,65 +32,53 @@ A much smaller transformer on the same task starts with higher loss and almost i
 
 ![Alt text](image-2.png)
 
-# selfies input - 10 property-value output
-
-After messing around a bit more we are now just using selfies as input and property-sequence as output. I tried a few different model sizes. The thing I found made the biggest difference was just training for longer. 
-
-| Model | Description | AUC | ACC | BAC | LOSS | MEAN_EVAL_LOSS | BATCH |
-|-------|-------------|-----|-----|-----|------|----------------|-------|
-| 1.0 | very large model | 0.7283 | 0.6440 | 0.6447 | 0.25 | | |
-| 1.1 | much smaller model & sum loss & L2 | 0.6914 | 0.6185 | 0.6178 | 921.94 | | |
-| 1.2 | much larger model & sum loss & 15000 iter | 0.6653 | 0.6005 | 0.6029 | | 1.76361 | 128 |
-| 1.2.1 | much smaller model & sum loss & 15000 iter | 0.7523 | 0.6707 | 0.6737 | | 1.5625 | 2048 |
-
-
-I believe what is happening with the fast 'convergence' is that the model takes a bit of time to learn to predict trivial things like property-name from property-name, the end token, and padding tokens. After that the loss drops much more slowly. 
-
-After getting an AUC over 0.8 we should try moving to a bigger machine, increasing the model size, and training for longer. 
-
-# selfies input - single property-value output
-It seemed worth trying a smaller set of property-values. So we tried just 1 property-value output sequence
-
-| Model | Description | AUC | ACC | BAC | LOSS | MEAN_EVAL_LOSS | BATCH |
-|-------|-------------|-----|-----|-----|------|----------------|-------|
-| 1.3 | try a 1 property-value output sequence | 0.7523 | 0.6707 | 0.6737 | | 1.5625 | 2048 |
-
-This did not seem to make a difference.
-
-# let's try a decoder only with plain causal mask
-perhaps the custom mask we wrote is not working and decoder only model is simpler and update this to take a selfies input and a selfies + propertyval output, then truncate the input severely.
-
-| Model | Description | AUC | ACC | BAC | LOSS | MEAN_EVAL_LOSS | BATCH |
-|-------|-------------|-----|-----|-----|------|----------------|-------|
-| 1.5 | decoder only | 0.7581 | 0.6759 | 0.6759 | | 32.53 | 256 |
-| 1.5.1 | decoder only big | 0.7704 | 0.68 | 0.68 | 31.4 | | 256 |
-The model is quite small right now, and there is no sign of overfitting 
-
-![Alt text](image-4.png)
-
-So lets make it way bigger.
-
-But, more importantly, we should get toxindex.com working with property categories, which is also finishing right now.
-
-# a new approach
-1. fixed prediction of properties with better mask
-2. when back to encoder-decoder
-3. predicting output of property-value sequence alone
-
-| Model | Description                    | AUC  | LOSS | BATCH        |
-|-------|--------------------------------|------|------|--------------|
-| 1.5   | encoder-decoder pv-only output | 0.55 | 2.45 | 10000 x 128  |
-
-
->>> position_df
+# selfies input 10 property output
              AUC       ACC       BAC  count
 nprops                                     
-0       0.821531  0.755916  0.724965     10
-1       0.522480  0.529046  0.508384     71
+9       0.945778  0.931818  0.801689     59
+8       0.935243  0.924230  0.807190     61
+7       0.928031  0.923098  0.801557     64
+6       0.924301  0.926159  0.772727     65
+5       0.913413  0.932384  0.761222     75
+4       0.897929  0.915158  0.750740     78
+3       0.891654  0.869126  0.740702    112
+2       0.882759  0.859155  0.753788    153
+1       0.871376  0.839355  0.755733    320
+0       0.806967  0.774648  0.677766    319
+epoch: 22       eval_loss: 0.7291       eval_acc: 0.9055        LR: 0.000012900014
 
->>> position_df
-             AUC       ACC       BAC  count
-nprops                                     
-1       0.803105  0.754282  0.699932    532
-0       0.683921  0.643544  0.622061    508
-2       0.663205  0.634772  0.617216    336
+# april 23 model 1
+100%|██████████████████████████████████████████████████| 669/669 [03:01<00:00,  3.69it/s]
+epoch: 41       eval_loss: 0.7265       eval_acc: 0.9103        LR: 0.00000944151
+![alt text](image-5.png)
+
+# nprops = 5 model
+>>> df[df['NUM_POS'] > 100].groupby('nprops').aggregate({'AUC': 'median', 'ACC': 'median', 'BAC': 'median', "cross_entropy_loss": 'median'})
+             AUC
+nprops          
+0       0.630444
+1       0.700298
+2       0.728316
+3       0.748020
+4       0.761504
+
+>>> evaltox21.groupby('nprops').aggregate({'AUC': 'median'})
+             AUC
+nprops          
+0       0.651042
+1       0.737103
+2       0.778509
+3       0.800564
+4       0.829319
+
+
+# mixture of experts model
+This model is still very small and already outperforms all our property-transformer models.
+
+evaldf.groupby(['nprops']).aggregate({'AUC': 'median','assay':'count'}).sort_values(by='AUC',ascending=False)
+nprops                 
+3       0.829222   4276
+2       0.822098   4272
+4       0.817691   4274
+1       0.795135   3761
+0       0.779107   2456

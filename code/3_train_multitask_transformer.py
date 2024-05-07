@@ -3,7 +3,7 @@ import itertools, pathlib, numpy as np, tqdm
 import torch, torch.utils.data, torch.optim as optim
 import cvae.tokenizer, cvae.utils as utils
 import cvae.models.multitask_transformer as mt 
-from pydantic import BaseModel
+import cvae.models.mixture_experts as me
 
 DEVICE = torch.device(f'cuda:0')
 tokenizer = cvae.tokenizer.SelfiesPropertyValTokenizer.load('brick/selfies_property_val_tokenizer')
@@ -12,11 +12,11 @@ class Trainer():
     
     def __init__(self, model):
         self.model = model.to(DEVICE)
-        self.optimizer = optim.AdamW(model.parameters(),lr=0.1,betas = (0.9, 0.98), eps=1e-9)
+        self.optimizer = optim.AdamW(model.parameters(),lr=1e-3,betas = (0.9, 0.98), eps=1e-9)
         self.lossfn = mt.MultitaskTransformer.lossfn(ignore_index=tokenizer.pad_idx)
      
-        self.scheduler = mt.NoamLR(self.optimizer, model_size=model.module.hdim, warmup_steps=4000)
-        
+        # self.scheduler = mt.NoamLR(self.optimizer, model_size=model.module.hdim, warmup_steps=4000)
+        self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='min', factor=0.5, patience=5, verbose=True, min_lr=1e-7)
         self.scheduler_loss = []
         self.scheduler_loss_interval = 100
         
@@ -122,16 +122,17 @@ class Trainer():
             
             mask = torch.rand(teach.shape, device=DEVICE) < self.mask_percent
             mask[:,0] = False # don't mask the first token
-            teach = teach.masked_fill(mask, tokenizer.pad_idx)
+            teach = teach.masked_fill(mask, tokenizer.pad_idx,)
 
             loss = self._train_batch(inp, teach, out)
             trn_loss.append(loss)
-            self.scheduler.step()
+            # self.scheduler.step()
             utils.write_path(self.metrics_path,f"train\t{i}\t{loss}\t{self.optimizer.param_groups[0]['lr']:.12f}\n")
             
             # SCHEDULER UPDATE 
             if (i + 1) % self.scheduler_loss_interval == 0:
                 mean_loss = np.mean(trn_loss)
+                self.scheduler.step(mean_loss)
                 utils.write_path(self.metrics_path,f"scheduler\t{i}\t{mean_loss}\t{self.optimizer.param_groups[0]['lr']:.12f}\n")
                 trn_loss = []
             
@@ -139,6 +140,7 @@ class Trainer():
             if (i + 1) % evaluation_interval == 0:
                 epoch += 1
                 eval_loss, eval_acc = self._evaluation_loss(valdl)
+                # self.scheduler.step(eval_loss)
                 self.test_losses.append(eval_loss)
                 if eval_loss < self.best_test_loss:
                     self.best_test_loss = eval_loss
@@ -147,20 +149,35 @@ class Trainer():
                 utils.write_path(self.metrics_path,f"eval\t{i}\t{self.test_losses[-1]}\n")
                 print(f"epoch: {epoch}\teval_loss: {self.best_test_loss:.4f}\teval_acc: {eval_acc:.4f}\tLR: {self.optimizer.param_groups[0]['lr']:.12f}")
 
-# model = mt.MultitaskTransformer(tokenizer).to(DEVICE)
-model = mt.MultitaskTransformer.load("brick/mtransform2").to(DEVICE)
+import importlib
+importlib.reload(mt)
+importlib.reload(me)
+
+model = me.MoE(tokenizer).to(DEVICE)
+# model = me.MoE.load("brick/moe").to(DEVICE)
 model = torch.nn.DataParallel(model)
 
-trnds = mt.SequenceShiftDataset("data/tensordataset/multitask_tensors/trn", tokenizer)
-trndl = torch.utils.data.DataLoader(trnds, batch_size=256, shuffle=True, prefetch_factor=100, num_workers=20)
-valds = mt.SequenceShiftDataset("data/tensordataset/multitask_tensors/tst", tokenizer)
-valdl = torch.utils.data.DataLoader(valds, batch_size=256, shuffle=True, prefetch_factor=100, num_workers=20)
+# model = mt.MultitaskTransformer(tokenizer).to(DEVICE)
+# model = mt.MultitaskTransformer.load("brick/mtransform2").to(DEVICE)
+# model = torch.nn.DataParallel(model)
+
+trnds = mt.SequenceShiftDataset("data/tensordataset/multitask_tensors/trn", tokenizer, nprops=5)
+trndl = torch.utils.data.DataLoader(trnds, batch_size=2560, shuffle=True, prefetch_factor=100, num_workers=20)
+valds = mt.SequenceShiftDataset("data/tensordataset/multitask_tensors/tst", tokenizer, nprops=5)
+valdl = torch.utils.data.DataLoader(valds, batch_size=2560, shuffle=True, prefetch_factor=100, num_workers=20)
+
+input, teach_forcing, out = next(iter(valdl))
+input, teach_forcing, out = input.to(DEVICE), teach_forcing.to(DEVICE), out.to(DEVICE)
+model(input, teach_forcing).shape
+
+pred = model(input, teach_forcing)
+pred = pred.permute(0,2,1)
 
 trainer = Trainer(model)\
     .set_trn_iterator(itertools.cycle(enumerate(trndl)))\
     .set_validation_dataloader(valdl)\
     .set_mask_percent(0.1)\
     .set_metrics_file(pathlib.Path("metrics/multitask_loss.tsv"), overwrite=True)\
-    .set_model_savepath("brick/mtransform2")
+    .set_model_savepath("brick/moe")
 
 trainer.start()

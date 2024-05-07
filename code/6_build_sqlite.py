@@ -1,27 +1,24 @@
-import os, sys
+import os, sys, biobricks as bb, pandas as pd, shutil, sqlite3
 import pyspark.sql, pyspark.sql.functions as F
-from pyspark.sql.functions import col
-import biobricks as bb, pandas as pd
 
 sys.path.insert(0, os.getcwd())
-from cvae.tokenizer import selfies_property_val_tokenizer as spt
+import cvae.tokenizer.selfies_property_val_tokenizer as spt
 
-spark = pyspark.sql.SparkSession.builder \
-    .appName("ChemharmonyDataProcessing") \
-    .config("spark.driver.memory", "64g") \
-    .config("spark.driver.maxResultSize", "100g") \
-    .getOrCreate()
+#%% SETUP =================================================================================
+spark = pyspark.sql.SparkSession.builder.appName("ChemharmonyDataProcessing")
+spark = spark.config("spark.driver.memory", "64g").config("spark.driver.maxResultSize", "100g").getOrCreate()
     
 ch = bb.assets('chemharmony')
 
-tokenizer = spt.SelfiesPropertyValTokenizer.load('data/processed/selfies_property_val_tokenizer')
+tokenizer = spt.SelfiesPropertyValTokenizer.load('brick/selfies_property_val_tokenizer')
 
+#%% BUILD PROPERTY TABLES =================================================================
 pytorch_id_to_property_token = lambda x : tokenizer.assay_id_to_token_idx(x)
 pytorch_id_to_property_token_udf = F.udf(pytorch_id_to_property_token, pyspark.sql.types.LongType())
 property_tokens = spark.read.parquet("data/processed/activities.parquet")\
     .withColumnRenamed('assay','property_id')\
     .withColumnRenamed('assay_index','property_pytorch_index')\
-    .withColumn("property_pytorch_index", col("property_pytorch_index").cast("int"))\
+    .withColumn("property_pytorch_index", F.col("property_pytorch_index").cast("int"))\
     .withColumn("property_token", pytorch_id_to_property_token_udf("property_pytorch_index"))\
     .select("property_id","property_token").distinct()
 
@@ -34,8 +31,6 @@ raw_activities = spark.read.parquet(ch.activities_parquet)\
     .join(property_tokens, on='property_id')\
     .withColumn('value_token',binval_to_value_token_udf('binary_value'))\
     .select('source','activity_id','property_id','property_token','substance_id','inchi','smiles','value','binary_value','value_token')
-# list out all the sources in raw_activites
-raw_activities.select('source').distinct().show()
 
 raw_prop_title = spark.read.parquet(ch.property_titles_parquet).withColumnRenamed('pid', 'property_id')
 
@@ -45,9 +40,6 @@ prop = prop.join(property_tokens, on='property_id').join(raw_prop_title, on='pro
 
 raw_prop_cat = spark.read.parquet(ch.property_categories_parquet)
 raw_prop_cat = raw_prop_cat.withColumnRenamed('pid', 'property_id')
-
-
-# CREATE SOME NORMALIZED TABLES PROPERTY, CATEGORY, SOURCE =========================
 
 ## categories and property_category
 cat = raw_prop_cat.select('category').distinct()
@@ -64,9 +56,7 @@ activities = raw_activities\
     .join(src, on='source')\
     .select('source_id','activity_id','property_id','property_token','substance_id','inchi','smiles','value','binary_value','value_token')
 
-
 # WRITE TABLE TO SQLITE =============================================================
-import sqlite3
 conn = sqlite3.connect('data/processed/cvae.sqlite')
 
 prop.toPandas().to_sql('property', conn, if_exists='replace', index=False)
@@ -97,11 +87,9 @@ conn.commit()
 conn.close()
 
 # MOVE RESULT TO BRICK/cvae.sqlite =============================================================
-import shutil
 shutil.move('data/processed/cvae.sqlite', 'brick/cvae.sqlite')
 
 # DO A SIMPLE TEST QUERY =============================================================
-# query the graph
 conn = sqlite3.connect('brick/cvae.sqlite')
 
 query = """

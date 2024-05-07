@@ -4,14 +4,17 @@ import random
 # SETUP =================================================================================
 df = pd.read_csv('data/metrics/multitask_metrics.csv')
 df.aggregate({'AUC': 'median', 'ACC': 'median', 'BAC': 'median', "cross_entropy_loss": 'median'})
+
+df[df['NUM_POS'] > 100].groupby('nprops').aggregate({'AUC': 'median', 'ACC': 'median', 'BAC': 'median', "cross_entropy_loss": 'median'})
+
 # how many assays?
 df['assay'].nunique()
 auc = df['AUC'].median()
 
 # AUC HISTOGRAM =========================================================================
-def auc_histogram(df):
-    assays = df.groupby('assay').filter(lambda x: x['nprops'].nunique() == 5)['assay'].unique()
-    plotdf = df[df['nprops'].isin([0, 1, 2, 3, 4]) & df['assay'].isin(assays)]
+def auc_histogram(df,nprops):
+    assays = df.groupby('assay').filter(lambda x: x['nprops'].nunique() == nprops)['assay'].unique()
+    plotdf = df[df['nprops'].isin(list(range(nprops))) & df['assay'].isin(assays)]
 
     plt.style.use('dark_background')
     g = sns.FacetGrid(plotdf, col='nprops', height=5, aspect=1.3, col_wrap=3, sharex=False, sharey=False)
@@ -33,7 +36,7 @@ def auc_histogram(df):
     g.add_legend()
     plt.savefig('notebook/plots/multitask_transformer_metrics.png', facecolor='none', transparent=True)
 
-auc_histogram(df)
+auc_histogram(df, nprops=1)
 
 # AUC BY POSITION =======================================================================
 ## select assays that appear with all values of nprops

@@ -79,23 +79,21 @@ def generate_static_mask(selfies_sz: int, assayval_sz:int) -> torch.Tensor:
     
 class MultitaskTransformer(nn.Module):
     
-    def __init__(self, tokenizer, hdim=1024, nhead=16, 
-                 num_layers=12, dim_feedforward=2048, 
-                 dropout_rate=0.1):
+    def __init__(self, tokenizer, hdim=256, nhead=2, num_layers=4, dim_feedforward=256, dropout_rate=0.1, output_size=None):
         
         super().__init__()
         
-        self.vocab_size = tokenizer.vocab_size
+        self.output_size = tokenizer.vocab_size if output_size is None else output_size
         self.hdim = hdim
         self.nhead = nhead
         self.dim_feedforward = dim_feedforward
         self.tokenizer = tokenizer
         self.token_pad_idx = tokenizer.PAD_IDX
         
-        self.embedding = nn.Embedding(self.vocab_size, self.hdim)
-        self.outemb = nn.Embedding(self.vocab_size, self.hdim)
+        self.embedding = nn.Embedding(tokenizer.vocab_size, self.hdim)
+        self.outemb = nn.Embedding(tokenizer.vocab_size, self.hdim)
         self.positional_encoding = PositionalEncoding(self.hdim)
-        # self.learned_pos_encode = LearnedPositionalEncoding(self.hdim)
+        # self.positional_encoding = LearnedPositionalEncoding(self.hdim)
         
         encode_args = {"d_model": self.hdim, "nhead": self.nhead, "dim_feedforward": self.dim_feedforward, "dropout": dropout_rate}
         encode_layer = nn.TransformerEncoderLayer(**encode_args, batch_first=True)
@@ -107,11 +105,12 @@ class MultitaskTransformer(nn.Module):
         self.decoder_norm = nn.LayerNorm(self.hdim)
         
         self.classification_layers = nn.Sequential(
-            nn.Linear(self.hdim, self.dim_feedforward),  # First layer upscales to dim_feedforward
-            nn.ReLU(),  # Nonlinear activation
-            nn.Linear(self.dim_feedforward, self.dim_feedforward // 2),  # Further processing layer
-            nn.ReLU(),  # Nonlinear activation
-            nn.Linear(self.dim_feedforward // 2, self.vocab_size)  # Final layer to match output size
+            # nn.Linear(self.hdim, self.dim_feedforward),  # First layer upscales to dim_feedforward
+            # nn.LeakyReLU(),  # Nonlinear activation
+            # nn.Linear(self.dim_feedforward, self.dim_feedforward // 2),  # Further processing layer
+            # nn.LeakyReLU(),  # Nonlinear activation
+            # nn.Linear(self.dim_feedforward // 2, self.output_size)  # Final layer to match output size
+            nn.Linear(self.hdim, self.output_size)
         )
 
 
@@ -123,8 +122,6 @@ class MultitaskTransformer(nn.Module):
         input_encoding = self.encoder(input_embedding, src_key_padding_mask=memory_mask)
         
         teach_forcing = self.positional_encoding(self.outemb(teach_forcing))
-        # tgt_mask = generate_square_subsequent_mask(teach_forcing.size(1)).to(input.device)
-        # tgt_mask[0,1] = 0.
         tgt_mask = generate_custom_subsequent_mask(teach_forcing.size(1)).to(input.device)
         
         decoded = self.decoder(teach_forcing, input_encoding, tgt_mask=tgt_mask, memory_key_padding_mask=memory_mask)
@@ -142,6 +139,20 @@ class MultitaskTransformer(nn.Module):
             # l2 = sum(p.pow(2.0).sum() for p in parameters if p.requires_grad)
             return ce_loss #+ weight_decay * l2
         return lossfn   
+    
+    # @staticmethod
+    # def lossfn(ignore_index = -100, weight_decay=1e-5):
+    #     ce_lossfn = nn.CrossEntropyLoss(reduction='mean', ignore_index=ignore_index, label_smoothing=0.0125)
+    #     def lossfn(parameters, logits, output):
+    #         sequence_length = output.size(1)
+    #         indices = torch.arange(sequence_length)
+    #         mask = (indices % 2 == 1) & (indices >= 3)  # Starts from index 3 and every second index thereafter
+    #         out_mask = (indices % 2 == 0) & (indices >= 2)  # Starts from index 2 and every second index thereafter
+    #         selected_logits = logits[:, :, mask]
+    #         selected_output = output[:, out_mask]
+    #         ce_loss = ce_lossfn(selected_logits, selected_output)
+    #         return ce_loss
+    #     return lossfn   
     
     def save(self, path):
         if not isinstance(path, pathlib.Path):
@@ -164,7 +175,9 @@ class MultitaskTransformer(nn.Module):
 
 class SequenceShiftDataset(torch.utils.data.Dataset):
 
-    def __init__(self, path, tokenizer: SelfiesPropertyValTokenizer):
+    def __init__(self, path, tokenizer: SelfiesPropertyValTokenizer, nprops=5, assay_filter=[]):
+        self.nprops = nprops
+        self.assay_filter = assay_filter
         self.data = []
         self.cumulative_lengths = [0]
         cumulative_length = 0
@@ -195,15 +208,15 @@ class SequenceShiftDataset(torch.utils.data.Dataset):
         selfies_raw, raw_assay_vals = idxdata[0][idx], idxdata[1][idx]
         
         # remove padding from selfies
-        selfies = selfies_raw[selfies_raw != self.pad_idx]
+        # selfies = selfies_raw[selfies_raw != self.pad_idx]
 
         # assay_val munging - unpad, randomly permute, add sos/eos tokens
         assay_vals = raw_assay_vals[raw_assay_vals != self.pad_idx][1:-1]
         reshaped_av = assay_vals.reshape(assay_vals.size(0) // 2, 2)
         av_shuffled = reshaped_av[torch.randperm(reshaped_av.size(0)),:].reshape(assay_vals.size(0))
         
-        # truncate to 3 random features
-        n_features = 10
+        # truncate to n_features random features
+        n_features = self.nprops
         av_truncate = av_shuffled[0:(n_features*2)]
         
         # add start and end tokends and pad to 120 length

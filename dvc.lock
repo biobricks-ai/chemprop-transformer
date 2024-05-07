@@ -1,78 +1,30 @@
 schema: '2.0'
 stages:
-  sqlite:
-    cmd: python code/6_build_sqlite.py
-    deps:
-    - path: code/6_build_sqlite.py
-      hash: md5
-      md5: 247b22651a1d117fc62a1d1d4fc695e7
-      size: 5637
-    outs:
-    - path: brick/cvae.sqlite
-      hash: md5
-      md5: 58bd399af35a653d49521bf0f6e7388a
-      size: 7417442304
-  preprocess:
-    cmd: python code/1_preprocess.py
-    deps:
-    - path: code/1_preprocess.py
-      hash: md5
-      md5: 0d2d01f7af376a61996a7b3a8dbf2fca
-      size: 4572
-    outs:
-    - path: data/processed/
-      hash: md5
-      md5: 115c3dd69deb0583d60f202ba41459f1.dir
-      size: 30763895793
-      nfiles: 805
-  build_tensordataset:
-    cmd: python code/2_build_tensordataset.py
-    deps:
-    - path: code/2_build_tensordataset.py
-      hash: md5
-      md5: e31dec81c75e3c7f2c7197503d55d6aa
-      size: 4914
-    - path: data/processed/
-      hash: md5
-      md5: 115c3dd69deb0583d60f202ba41459f1.dir
-      size: 30763895793
-      nfiles: 805
-    outs:
-    - path: brick/selfies_property_val_tokenizer/
-      hash: md5
-      md5: baa3dbed0ead82714f151e499628559d.dir
-      size: 83833
-      nfiles: 2
-    - path: data/tensordataset/
-      hash: md5
-      md5: c814fa902a7e7db0af1a8da4bb4c6c42.dir
-      size: 138654084221
-      nfiles: 418
   train:
     cmd: python code/3_train_multitask_transformer.py
     deps:
     - path: brick/selfies_property_val_tokenizer/
       hash: md5
-      md5: baa3dbed0ead82714f151e499628559d.dir
+      md5: eacb612169dffdc6d0571dbbf59bf6e2.dir
       size: 83833
       nfiles: 2
     - path: code/3_train_multitask_transformer.py
       hash: md5
-      md5: 2c94c97d2fbc6263fa5180831f8be6af
-      size: 7022
+      md5: 59c4d5122c09e1cac0848b776b73d144
+      size: 7696
     - path: data/processed/
       hash: md5
-      md5: 115c3dd69deb0583d60f202ba41459f1.dir
-      size: 30763895793
+      md5: d6ff665df72e217c5ece373f8574fb77.dir
+      size: 30783005052
       nfiles: 805
     - path: data/tensordataset/
       hash: md5
-      md5: c814fa902a7e7db0af1a8da4bb4c6c42.dir
-      size: 138654084221
+      md5: c99d9c8a08821fdc0e16a1817f5c8578.dir
+      size: 138747790269
       nfiles: 418
     outs:
-    - path: brick/mtransform2
+    - path: brick/moe
       hash: md5
-      md5: 031eec48a6504ba4d33d04fd218dead6.dir
-      size: 1120489172
+      md5: c19daf13715ded4e538e83a478143e0e.dir
+      size: 116879082
       nfiles: 3
