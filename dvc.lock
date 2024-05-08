@@ -51,3 +51,28 @@ stages:
       md5: c99d9c8a08821fdc0e16a1817f5c8578.dir
       size: 138747790269
       nfiles: 418
+  sqlite:
+    cmd: python code/6_build_sqlite.py
+    deps:
+    - path: code/6_build_sqlite.py
+      hash: md5
+      md5: 7c5d4001b25218edc93d8531206b746e
+      size: 5633
+    outs:
+    - path: brick/cvae.sqlite
+      hash: md5
+      md5: 5749650558c339136c0b6494e7ae677d
+      size: 8787746816
+  preprocess:
+    cmd: python code/1_preprocess.py
+    deps:
+    - path: code/1_preprocess.py
+      hash: md5
+      md5: 0d2d01f7af376a61996a7b3a8dbf2fca
+      size: 4572
+    outs:
+    - path: data/processed/
+      hash: md5
+      md5: d6ff665df72e217c5ece373f8574fb77.dir
+      size: 30783005052
+      nfiles: 805
