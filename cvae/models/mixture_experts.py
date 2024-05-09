@@ -41,7 +41,6 @@ class MoE(nn.Module):
     def load(dirpath = pathlib.Path("brick/mtransform1")):
         dirpath = pathlib.Path(dirpath)
         tokenizer = SelfiesPropertyValTokenizer.load(dirpath / "spvt_tokenizer")
-        # TODO this needs more work.
         model = MoE(tokenizer)
         model.load_state_dict(torch.load(dirpath / 'mtransformer.pt'))
         model.eval()

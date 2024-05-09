@@ -72,7 +72,7 @@ def run_eval(i, raw_inp, raw_out, out_df, nprops):
     
     return pd.concat([out_df, batch_df]) if len(out_df) > 0 else batch_df
 
-batch_size=10
+batch_size = 5
 nprops = 5
 val = mt.SequenceShiftDataset("data/tensordataset/multitask_tensors/hld", tokenizer, nprops=nprops)
 valdl = torch.utils.data.DataLoader(val, batch_size=batch_size, shuffle=False)

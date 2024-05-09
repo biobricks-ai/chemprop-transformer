@@ -73,4 +73,4 @@ cbar.ax.yaxis.set_tick_params(color='white')
 cbar.ax.yaxis.set_ticklabels([f'{x:.2f}' for x in cbar.get_ticks()], color='white')
 
 # Save the figure to a file
-plt.savefig('notebook/plots/category_auc_heatmap.png')
+plt.savefig('notebook/plots/category_auc_heatmap.png',facecolor='black',bbox_inches='tight',dpi=300)
