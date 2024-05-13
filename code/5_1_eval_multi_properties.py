@@ -63,9 +63,11 @@ def run_eval(i, raw_inp, raw_out, out_df, nprops):
     
     # cut assays up into groups of nprops then build 10 strings with assay 0, assay 0 + assay 1, assay 0 + assay 1 + assay 2, etc.
     assays_reshaped = assays.reshape(-1, nprops).astype(str)
+    values_reshaped = values.reshape(-1, nprops).astype(str)
     prior_assays = [' + '.join(assays_reshaped[i, :j+1]) for i in range(len(assays_reshaped)) for j in range(nprops)]
+    prior_values = [values_reshaped[i, :j+1] for i in range(len(values_reshaped)) for j in range(nprops)]
     batch_df = pd.DataFrame({'batch': i, 'chemical_id': chemical_id, 
-                                'prior_assays': prior_assays,
+                                'prior_assays': prior_assays, 'prior_values': prior_values,
                                 'assay': assays, 
                                 'value': values, 'probs':probs, 'nprops':position,
                                 'prob_assays': prob_assays, 'prob_vals': probmax_vals})
@@ -76,11 +78,15 @@ batch_size = 5
 nprops = 5
 val = mt.SequenceShiftDataset("data/tensordataset/multitask_tensors/hld", tokenizer, nprops=nprops)
 valdl = torch.utils.data.DataLoader(val, batch_size=batch_size, shuffle=False)
-out_df = pd.DataFrame({'chemical_id':[], 'prior_assays':[], 'assay':[], 'value':[], 'probs':[], 'nprops':[], 'prob_assays':[], 'prob_vals':[]})
+out_df = pd.DataFrame({'chemical_id':[], 'prior_assays':[], 'prior_values':[], 'assay':[], 'value':[], 'probs':[], 'nprops':[], 'prob_assays':[], 'prob_vals':[]})
 for _ in range(100):
     for i, (raw_inp, _, raw_out) in tqdm.tqdm(enumerate(valdl), total=len(val)/batch_size):
         out_df = run_eval(i, raw_inp, raw_out, out_df, nprops)
     out_df.drop_duplicates(subset=['chemical_id', 'prior_assays'],inplace=True)
+
+# transform prior_assays back to array
+out_df['prior_assays'] = out_df['prior_assays'].apply(lambda x: x.split(' + '))
+out_df.to_csv("data/metrics/multitask_predictions.csv", index=False)
 
 sum(out_df['assay'] == out_df['prob_assays']) / len(out_df)
 sum(out_df['value'] == out_df['prob_vals']) / len(out_df)
