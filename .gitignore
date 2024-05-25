@@ -15,3 +15,4 @@ position_metrics1.csv
 *.png
 scratch.py
 notes.md
+*.log

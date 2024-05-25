@@ -33,23 +33,16 @@ stages:
     outs:
     - brick/moe
 
-  # test:
-  #   cmd: python code/4_Test.py
-  #   deps:
-  #   - code/4_Test.py
-  #   - data/processed
-  #   - models/train
-  #   outs:
-  #   - metrics/test
-
-  # inference:
-  #   cmd: python code/5_Inference.py
-  #   deps:
-  #   - code/5_Inference.py
-  #   - data/processed
-  #   - models/train
-  #   outs:
-  #   - metrics/inference
+  evaluate:
+    cmd: python code/5_1_eval_multi_properties.py
+    deps:
+    - code/5_1_eval_multi_properties.py
+    - brick/moe
+    - brick/selfies_property_val_tokenizer/
+    - data/tensordataset/multitask_tensors/hld
+    outs:
+    - data/metrics/multitask_predictions.csv
+    - data/metrics/multitask_metrics.csv
   
   sqlite:
     cmd: python code/6_build_sqlite.py

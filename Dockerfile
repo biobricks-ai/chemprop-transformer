@@ -35,9 +35,9 @@ COPY flask_cvae/requirements.txt requirements.txt
 RUN pip install --trusted-host pypi.python.org -r requirements.txt
 
 # Copy the necessary resources
-COPY brick/mtransform2 brick/mtransform2
-COPY brick/cvae.sqlite brick/cvae.sqlite
-COPY brick/selfies_property_val_tokenizer brick/selfies_property_val_tokenizer
+# COPY brick/moe brick/moe
+# COPY brick/cvae.sqlite brick/cvae.sqlite
+# COPY brick/selfies_property_val_tokenizer brick/selfies_property_val_tokenizer
 
 # Expose the port the app runs on
 EXPOSE 6515

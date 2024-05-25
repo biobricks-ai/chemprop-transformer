@@ -1,4 +1,4 @@
-import itertools
+import itertools, uuid
 import pandas as pd, tqdm, sklearn.metrics, torch, numpy as np, os
 import cvae.tokenizer, cvae.models.multitask_transformer as mt, cvae.utils, cvae.models.mixture_experts as me
 
@@ -79,13 +79,21 @@ nprops = 5
 val = mt.SequenceShiftDataset("data/tensordataset/multitask_tensors/hld", tokenizer, nprops=nprops)
 valdl = torch.utils.data.DataLoader(val, batch_size=batch_size, shuffle=False)
 out_df = pd.DataFrame({'chemical_id':[], 'prior_assays':[], 'prior_values':[], 'assay':[], 'value':[], 'probs':[], 'nprops':[], 'prob_assays':[], 'prob_vals':[]})
-for _ in range(100):
+# create tempdir
+os.makedirs("data/metrics/temp", exist_ok=True)
+for epoch in tqdm.tqdm(range(100)):
     for i, (raw_inp, _, raw_out) in tqdm.tqdm(enumerate(valdl), total=len(val)/batch_size):
         out_df = run_eval(i, raw_inp, raw_out, out_df, nprops)
-    out_df.drop_duplicates(subset=['chemical_id', 'prior_assays'],inplace=True)
 
-# transform prior_assays back to array
+    out_df.drop_duplicates(subset=['chemical_id', 'prior_assays'],inplace=True)
+    out_df.to_csv(f"data/metrics/temp/multitask_predictions_{str(uuid.uuid4())}.csv", index=False)
+
+
+# read all the temp files and concatenate them
+out_df = pd.concat([pd.read_csv(f"data/metrics/temp/{x}") for x in os.listdir("data/metrics/temp")])
 out_df['prior_assays'] = out_df['prior_assays'].apply(lambda x: x.split(' + '))
+out_df.drop_duplicates(subset=['chemical_id', 'prior_assays'],inplace=True)
+
 out_df.to_csv("data/metrics/multitask_predictions.csv", index=False)
 
 sum(out_df['assay'] == out_df['prob_assays']) / len(out_df)

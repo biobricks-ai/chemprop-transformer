@@ -36,7 +36,7 @@ def auc_histogram(df,nprops):
     g.add_legend()
     plt.savefig('notebook/plots/multitask_transformer_metrics.png', facecolor='none', transparent=True)
 
-auc_histogram(df, nprops=1)
+auc_histogram(df, nprops=5)
 
 # AUC BY POSITION =======================================================================
 ## select assays that appear with all values of nprops

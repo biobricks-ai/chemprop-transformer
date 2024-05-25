@@ -1,10 +1,12 @@
 import pandas as pd, sqlite3, seaborn as sns, matplotlib.pyplot as plt
+from matplotlib.colors import ListedColormap
 
 #%% TOXCAST BENCHMARK ===========================================================
 conn = sqlite3.connect('brick/cvae.sqlite')
 
 # get all the property_tokens for tox21 properties
 prop_src = pd.read_sql("SELECT property_token,title,source FROM property p INNER JOIN source s on p.source_id = s.source_id", conn)
+prop_src = prop_src.groupby('property_token').first().reset_index()
 
 # pull in multitask_metrics
 evaldf = pd.read_csv('data/metrics/multitask_metrics.csv')\
@@ -44,14 +46,24 @@ evalcat = pd.read_csv('data/metrics/multitask_metrics.csv')\
 evalcat.aggregate({'AUC': 'median','assay':'count'})
 pdf = evalcat.groupby(['category','nprops']).aggregate({'AUC': 'median','assay':'count'}).reset_index().sort_values(by=['category','AUC'],ascending=False)
 
+# create a 'category_order' column with a numeric sorting categories by median AUC
+pdf['category_order'] = pdf.groupby('category')['AUC'].transform('median')
+pdf['num_nprops'] = pdf.groupby('category')['nprops'].transform('count')
+pdf = pdf[pdf['num_nprops'] > 4]
+
 # create heatmap of AUC's with range 0.5 to 1.0 red to green 
 # rows should be categories, columns should be nprops
 heatmap_data = pdf.pivot(index="category", columns="nprops", values="AUC")
+heatmap_data['order'] = pdf.groupby('category')['category_order'].first()
 heatmap_data.index = heatmap_data.index.map(lambda x: x[:25] if len(x) > 25 else x)
-
+heatmap_data = heatmap_data.sort_values(by='order', ascending=False).drop(columns='order')
 
 # Create the heatmap using seaborn
-cmap = sns.blend_palette(["#2a2a2a", "#34eb37"], as_cmap=True)
+# cmap = sns(["#2a2a2a", "#486730", "#34eb37"], as_cmap=True)
+# cmap = sns.diverging_palette(240, 120, s=75, l=40, n=3, center="dark", as_cmap=True)
+cmap = ListedColormap(['#2a2a2a', '#486730', '#34eb37', '#d4af37'])
+
+heatmap_data_colored = heatmap_data.map(lambda x: 0 if x <= 0.6 else (1 if x <= 0.7 else 2))
 
 # Create the heatmap using seaborn
 plt.figure(figsize=(12, 9))
