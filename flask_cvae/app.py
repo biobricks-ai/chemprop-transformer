@@ -1,21 +1,19 @@
 from flask import Flask, request, jsonify
-import pandas as pd
-import cvae.models.multitask_transformer as mtt
-import cvae.tokenizer.selfies_tokenizer as st
-import cvae.tokenizer.selfies_property_val_tokenizer as spt
+import pandas as pd, numpy as np
+import cvae.models.mixture_experts as moe
 import cvae.spark_helpers as H
-import numpy as np
-import torch
-import selfies as sf
+import torch, torch.nn
 import sqlite3
-import types
-import tqdm
-import pandas
-from itertools import chain
-import os
 import threading
-import uuid
 import logging
+
+# Set up logging
+# logging.basicConfig(filename='predictions.log', level=logging.INFO, 
+#                     format='%(asctime)s %(levelname)s:%(message)s')
+
+logging.basicConfig(level=logging.INFO, 
+                    format='%(asctime)s %(levelname)s:%(message)s',
+                    handlers=[logging.StreamHandler()])
 
 DEVICE = torch.device(f'cuda:0')
 predict_lock = threading.Lock()
@@ -55,8 +53,9 @@ class Predictor():
     
     def __init__(self):
         self.dburl = 'brick/cvae.sqlite'
-        self.model = mtt.MultitaskTransformer.load("brick/mtransform2").to(DEVICE)
-        self.tokenizer = spt.SelfiesPropertyValTokenizer.load('brick/selfies_property_val_tokenizer')
+        self.model = moe.MoE.load("brick/moe").to(DEVICE)
+        self.tokenizer = self.model.tokenizer
+        self.model = torch.nn.DataParallel(self.model)  
         
         conn = sqlite3.connect(self.dburl)
         conn.row_factory = sqlite3.Row 
@@ -110,46 +109,74 @@ class Predictor():
         conn.close()
         return res
     
-    # returns predictions for one property_token
-    # self = Predictor()
-    # inchi = "InChI=1S/C9H8O4/c1-6(10)13-8-5-3-2-4-7(8)9(11)12/h2-5H,1H3,(H,11,12)"
-    # property_token = 3808
-    def predict_property(self, inchi, property_token, seed=137) -> dict:
+    def predict_property_with_randomized_tensors(self, inchi, property_token, seed, num_rand_tensors=1000):
         # Set the seeds for reproducibility
         np.random.seed(seed)
         torch.manual_seed(seed)
         
         smiles = H.inchi_to_smiles_safe(inchi)
         selfies = H.smiles_to_selfies_safe(smiles)
+        input = torch.LongTensor(self.tokenizer.selfies_tokenizer.selfies_to_indices(selfies))
+        input = input.view(1, -1).to(DEVICE)
+        # moe takes as input selfies_token and pv_token as teach_force output
         
-        known_props = pd.DataFrame(self._get_known_properties(inchi))
-        property_value_pairs = list(zip(known_props['property_token'], known_props['value_token']))
+        # known_props = pd.DataFrame(self._get_known_properties(inchi))
+        # known_props = known_props[known_props['property_token'] != property_token]
+        
+        # if known_props.empty:
+        #     print(f"No known properties found for InChI: {inchi}")
+        # else:
+        #     print(f"Known properties for InChI {inchi}: {known_props}")
 
-        selfies_tokens = torch.LongTensor(self.tokenizer.selfies_tokenizer.selfies_to_indices(selfies))
-        av_flat = torch.LongTensor(list(chain.from_iterable(property_value_pairs)))
-        av_reshaped = av_flat.reshape(av_flat.size(0) // 2, 2)
+        # property_value_pairs = list(zip(known_props['property_token'], known_props['value_token']))
+
         
-        num_rand_tensors = 1000
-        rand_tensors = []
-        for _ in range(num_rand_tensors):
-            av_shuffled = av_reshaped[torch.randperm(av_reshaped.size(0)),:].reshape(av_flat.size(0))
-            av_truncate = av_shuffled[0:18]
+        # av_flat = torch.LongTensor(list(chain.from_iterable(property_value_pairs)))
+        
+        # if av_flat.numel() == 0:
+        #     print(f"No property value pairs for InChI: {inchi}")
+        #     return np.array([])  # or handle this case appropriately
+        
+        # av_reshaped = av_flat.reshape(av_flat.size(0) // 2, 2)
+        
+        # rand_tensors = []
+        # for i in range(num_rand_tensors):
+        #     av_shuffled = av_reshaped[torch.randperm(av_reshaped.size(0)),:].reshape(av_flat.size(0))
+        #     av_truncate = av_shuffled[0:18]
             
-            av_sos_trunc = torch.cat([torch.LongTensor([self.tokenizer.SEP_IDX]), av_truncate])
-            selfies_av = torch.hstack([selfies_tokens, av_sos_trunc])
-            rand_tensors.append(selfies_av)
+        #     av_sos_trunc = torch.cat([torch.LongTensor([self.tokenizer.SEP_IDX]), av_truncate])
+        #     selfies_av = torch.hstack([selfies_tokens, av_sos_trunc])
+            
+        #     print(f"Random Tensor {i} size: {selfies_av.size()}")
+        #     rand_tensors.append(selfies_av)
         
-        rand_tensors = torch.stack(rand_tensors).to(DEVICE)
+        # rand_tensors = torch.stack(rand_tensors).to(DEVICE)
+        # print(f"Stacked Random Tensors size: {rand_tensors.size()}")
+        
+        # out = torch.hstack([av_truncate,torch.tensor([self.pad_idx])])
+        teach_force = torch.LongTensor([1, self.tokenizer.SEP_IDX, property_token]).view(1, -1).to(DEVICE)
+
+        # Ensure indices are within bounds
+        try:
+            value_indexes = list(self.tokenizer.value_indexes().values())
+            result_logit = self.model(input, teach_force)[:, -1, value_indexes]
+        except RuntimeError as e:
+            print(f"Error in model forward pass: {e}")
+            print(f"selfies shape: {input.shape}, teach_force shape: {teach_force.shape}")
+            raise
+
+        return torch.softmax(result_logit, dim=1).detach().cpu().numpy()
+    
+    def predict_property(self, inchi, property_token, seed=137) -> dict:
         value_indexes = list(self.tokenizer.value_indexes().values())
         one_index = value_indexes.index(self.tokenizer.value_id_to_token_idx(1))
+        predictions = self.predict_property_with_randomized_tensors(inchi, property_token, seed)
         
-        property_token_tensor = torch.LongTensor([property_token, self.tokenizer.PAD_IDX, self.tokenizer.END_IDX]).view(1,-1).to(DEVICE)
-        av_add_prop = torch.cat([rand_tensors, property_token_tensor.expand(num_rand_tensors, -1)], dim=1)
-        teach_force = torch.clone(av_add_prop)
-        predictions = torch.softmax(self.model(av_add_prop, teach_force)[:, -3, value_indexes], dim=1).detach().cpu().numpy()
-        mean_pred = np.mean(predictions[:,one_index], axis=0)
-                
-        return mean_pred
+        if predictions.size == 0:
+            logging.info(f"No predictions generated for InChI: {inchi} and property token: {property_token}")
+            return np.nan  # or handle this case appropriately
+        
+        return np.mean(predictions[:, one_index], axis=0)
     
     def cached_predict_property(self, inchi, property_token):
         prediction = Prediction.get(inchi, property_token)
@@ -162,33 +189,22 @@ class Predictor():
 
 app = Flask(__name__)
 predictor = Predictor()
-
+# InChI=1S/C9H8O4/c1-6(10)13-8-5-3-2-4-7(8)9(11)12/h2-5H,1H3,(H,11,12) and property token: 6178
+inchi = "InChI=1S/C9H8O4/c1-6(10)13-8-5-3-2-4-7(8)9(11)12/h2-5H,1H3,(H,11,12)"
+property_token = 6178
+seed = 137
 @app.route('/predict', methods=['GET'])
 def predict():
-    print(f"Predicting property for inchi: {request.args.get('inchi')} and property token: {request.args.get('property_token')}")
+    logging.info(f"Predicting property for inchi: {request.args.get('inchi')} and property token: {request.args.get('property_token')}")
     inchi = request.args.get('inchi')
     property_token = request.args.get('property_token', None)
     if inchi is None or property_token is None:
         return jsonify({'error': 'inchi and property token parameters are required'})
     
     with predict_lock:
-        mean_value = float(predictor.predict_property(inchi, int(property_token)))
+        mean_value = float(predictor.cached_predict_property(inchi, int(property_token)))
 
-    return jsonify({"inchi":inchi, "property_token":property_token, "positive_prediction":mean_value})
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
+    return jsonify({"inchi": inchi, "property_token": property_token, "positive_prediction": mean_value})
+
+if __name__ == '__main__':
+    app.run(debug=True)

@@ -76,3 +76,34 @@ stages:
       md5: d6ff665df72e217c5ece373f8574fb77.dir
       size: 30783005052
       nfiles: 805
+  evaluate:
+    cmd: python code/5_1_eval_multi_properties.py
+    deps:
+    - path: brick/moe
+      hash: md5
+      md5: c19daf13715ded4e538e83a478143e0e.dir
+      size: 116879082
+      nfiles: 3
+    - path: brick/selfies_property_val_tokenizer/
+      hash: md5
+      md5: eacb612169dffdc6d0571dbbf59bf6e2.dir
+      size: 83833
+      nfiles: 2
+    - path: code/5_1_eval_multi_properties.py
+      hash: md5
+      md5: d2a058527b7a6e79f82e234e27390c95
+      size: 6468
+    - path: data/tensordataset/multitask_tensors/hld
+      hash: md5
+      md5: 6578f0cc324e5e063345e1360a914eb3.dir
+      size: 2401697746
+      nfiles: 67
+    outs:
+    - path: data/metrics/multitask_metrics.csv
+      hash: md5
+      md5: 1b874436e7707939bf498a965ed93844
+      size: 983424
+    - path: data/metrics/multitask_predictions.csv
+      hash: md5
+      md5: 4085f715b465e5dc9635d73d53c04e06
+      size: 16824987411
