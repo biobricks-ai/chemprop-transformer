@@ -26,21 +26,27 @@ evaldf[evaldf['source'] == 'tox21'].groupby(['nprops']).aggregate({'AUC': 'media
 
 #%% CATEGORICAL BENCHMARK ======================================================
 
-pcat = pd.read_sql("""SELECT property_token,title,category,strength FROM property p 
+pcat = pd.read_sql("""SELECT s.source, property_token,title,category,strength FROM property p 
                        INNER JOIN property_category pc ON p.property_id = pc.property_id
-                       INNER JOIN category c on pc.category_id = c.category_id""", 
+                       INNER JOIN category c on pc.category_id = c.category_id
+                       INNER JOIN source s on p.source_id = s.source_id """, 
                        conn)
-
-titles = pcat[pcat['category'] == 'acute inhalation toxicity']
-titles = titles[titles['strength'] > 8.0]
-
-# print titles
-for i, row in titles[['title']].iterrows():
-    print(row['title'])
     
 evalcat = pd.read_csv('data/metrics/multitask_metrics.csv')\
     .merge(pcat, left_on='assay', right_on='property_token', how='inner')\
     .query('strength > 8.0')
+
+# query the nephrotoxicity category and read titles and AUCs
+res = evalcat.query('category == "nephrotoxicity"')[['property_token','source','title','AUC','NUM_POS','NUM_NEG','strength']].sort_values(by='AUC',ascending=False)
+
+# group by property_token and take the first row for each property
+res = res.sort_values(by='AUC',ascending=False)
+
+res = res.groupby('property_token').first().reset_index()
+
+# iterate over res and print title and AUC, with 2 decimal precision
+for i, row in res.iterrows():
+    print(f'{row["strength"]}\t{row["AUC"]:.2f}\t{row["NUM_POS"]+row["NUM_NEG"]}\t{row["source"]}\t{row["title"]}')
 
 # get the median AUC for each property
 evalcat.aggregate({'AUC': 'median','assay':'count'})
