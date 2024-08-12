@@ -29,6 +29,7 @@ class LearnedPositionalEncoding(nn.Module):
         x = x + position_embeddings
         
         return self.dropout(x)
+
 class PositionalEncoding(nn.Module):
     def __init__(self, d_model, dropout=0.1, max_len=5000):
         super(PositionalEncoding, self).__init__()
@@ -139,6 +140,30 @@ class MultitaskTransformer(nn.Module):
             # l2 = sum(p.pow(2.0).sum() for p in parameters if p.requires_grad)
             return ce_loss #+ weight_decay * l2
         return lossfn   
+    
+    @staticmethod
+    def focal_lossfn(alpha=0.25, gamma=2.0, ignore_index=-100):
+        def lossfn(parameters, logits, output):
+            # Compute cross-entropy loss without reduction
+            ce_loss = F.cross_entropy(logits, output, reduction='none', ignore_index=ignore_index)
+            
+            # Create mask to ignore the ignore_index
+            valid_mask = (output != ignore_index).float()
+            
+            # Apply valid mask to ce_loss
+            ce_loss = ce_loss * valid_mask
+            
+            # Compute focal loss components
+            pt = torch.exp(-ce_loss)
+            focal_loss = alpha * (1 - pt) ** gamma * ce_loss
+            
+            # Apply valid mask to focal_loss
+            focal_loss = focal_loss * valid_mask
+            
+            # Return the mean focal loss
+            return focal_loss.sum() / valid_mask.sum()
+        
+        return lossfn
     
     # @staticmethod
     # def lossfn(ignore_index = -100, weight_decay=1e-5):
