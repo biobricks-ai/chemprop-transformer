@@ -10,6 +10,29 @@ import tqdm
 from cvae.tokenizer.selfies_property_val_tokenizer import SelfiesPropertyValTokenizer
 import cvae.utils
 
+<<<<<<< HEAD
+=======
+class LearnedPositionalEncoding(nn.Module):
+    def __init__(self, d_model, max_len=5000, dropout=0.1):
+        super().__init__()
+        self.dropout = nn.Dropout(p=dropout)
+        
+        # Learnable embeddings for the positions
+        self.positional_embeddings = nn.Embedding(max_len, d_model)
+
+    def forward(self, x):
+        # Create a tensor of position indices [0, 1, 2, ..., sequence_length-1]
+        position_indices = torch.arange(x.size(1), dtype=torch.long, device=x.device).unsqueeze(0).expand(x.size(0), x.size(1))
+        
+        # Retrieve the positional embeddings for the position indices
+        position_embeddings = self.positional_embeddings(position_indices)
+        
+        # Add the positional embeddings to the input embeddings
+        x = x + position_embeddings
+        
+        return self.dropout(x)
+
+>>>>>>> first-moe
 class PositionalEncoding(nn.Module):
     def __init__(self, d_model, dropout=0.1, max_len=5000):
         super(PositionalEncoding, self).__init__()
@@ -116,6 +139,44 @@ class MultitaskTransformer(nn.Module):
             ce_loss = ce_lossfn(logits, output)
             return ce_loss
         return lossfn   
+    
+    @staticmethod
+    def focal_lossfn(alpha=0.25, gamma=2.0, ignore_index=-100):
+        def lossfn(parameters, logits, output):
+            # Compute cross-entropy loss without reduction
+            ce_loss = F.cross_entropy(logits, output, reduction='none', ignore_index=ignore_index)
+            
+            # Create mask to ignore the ignore_index
+            valid_mask = (output != ignore_index).float()
+            
+            # Apply valid mask to ce_loss
+            ce_loss = ce_loss * valid_mask
+            
+            # Compute focal loss components
+            pt = torch.exp(-ce_loss)
+            focal_loss = alpha * (1 - pt) ** gamma * ce_loss
+            
+            # Apply valid mask to focal_loss
+            focal_loss = focal_loss * valid_mask
+            
+            # Return the mean focal loss
+            return focal_loss.sum() / valid_mask.sum()
+        
+        return lossfn
+    
+    # @staticmethod
+    # def lossfn(ignore_index = -100, weight_decay=1e-5):
+    #     ce_lossfn = nn.CrossEntropyLoss(reduction='mean', ignore_index=ignore_index, label_smoothing=0.0125)
+    #     def lossfn(parameters, logits, output):
+    #         sequence_length = output.size(1)
+    #         indices = torch.arange(sequence_length)
+    #         mask = (indices % 2 == 1) & (indices >= 3)  # Starts from index 3 and every second index thereafter
+    #         out_mask = (indices % 2 == 0) & (indices >= 2)  # Starts from index 2 and every second index thereafter
+    #         selected_logits = logits[:, :, mask]
+    #         selected_output = output[:, out_mask]
+    #         ce_loss = ce_lossfn(selected_logits, selected_output)
+    #         return ce_loss
+    #     return lossfn   
     
     def save(self, path):
         if not isinstance(path, pathlib.Path):

@@ -19,9 +19,9 @@ stages:
       nfiles: 805
     - path: data/tensordataset/
       hash: md5
-      md5: c99d9c8a08821fdc0e16a1817f5c8578.dir
-      size: 138747790269
-      nfiles: 418
+      md5: 30b820e39fb523ecbe73026ae60c61d9.dir
+      size: 115293146475
+      nfiles: 351
     outs:
     - path: brick/moe
       hash: md5

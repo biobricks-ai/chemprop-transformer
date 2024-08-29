@@ -1,8 +1,17 @@
 import sys, os, pandas as pd, tqdm, sqlite3, seaborn as sns, matplotlib.pyplot as plt, sklearn.metrics
 sys.path.append("./")
-from flask_cvae.app import Predictor
+from flask_cvae.predictor import Predictor
+from tqdm import tqdm
+import seaborn as sns
+import matplotlib.pyplot as plt
+from scipy.spatial.distance import pdist, squareform
+from scipy.cluster.hierarchy import linkage, leaves_list
+from matplotlib.colors import LinearSegmentedColormap, ListedColormap, BoundaryNorm
+import matplotlib.gridspec as gridspec
 
-predictor : Predictor = Predictor()
+tqdm.pandas()
+
+predictor : Predictor = Predictor(sqlite3.connect('flask_cvae/predictions.sqlite'))
 def build_propdf():
     conn = sqlite3.connect('brick/cvae.sqlite')
     proptitle = pd.read_sql("SELECT property_token,title FROM property p", conn).groupby('property_token').first().reset_index()
@@ -110,26 +119,22 @@ pprops = altdf[['source','property_title','data','category','category_strength',
 for category in pprops['category'].unique():    
     print()
     print(category)
-    subprops = pprops.query(f'category == "{category}"').head(10)
-    for source, title, category, data, val in subprops.values:
+    subprops = pprops.query(f'category == "{category}"').head(min(10, len(pprops)))
+    for source, title, category, val in subprops.values:
         print(f"{val:.2f}\t{source}\t{title}")
 
-# >>> pprops
-#       source                                     property_title              category  prediction_sum
-# 0    pubchem  [luminescence assay for cytotoxic compounds in...       carcinogenicity        0.902720
-# 1     chembl         trypanosoma brucei inhibitor potency assay                 other        0.900522
-# Plot heatmaps faceted by category with row as property_title and column as alternative
-# they should have a dark background
-# they should get more red closer to 1.0 and dark color otherwise.
-# truncate the row names to something reasonable
-# don't show the column names
-import seaborn as sns
-import matplotlib.pyplot as plt
-from scipy.spatial.distance import pdist, squareform
-from scipy.cluster.hierarchy import linkage, leaves_list
+#%% HEATMAP
 
-pdf = altdf.query('category=="endocrine disruption"').query('category_strength > 9')[['property_title','name','prediction']].drop_duplicates()
-pdf['property_title'] = pdf['property_title'].map(lambda x: x[:50] if len(x) > 25 else x)
+altdf = pd.read_csv('altdf.csv', index_col=0)
+
+pdf = altdf.merge(knowndf, on=['inchi','property_token'], how='left').drop_duplicates()
+pdf['known_value'] = pdf['value'].fillna('unknown')
+pdf['known_value'] = pdf['known_value'].map({'positive': 1, 'negative': -1, 'unknown': 0})
+
+pdf = pdf.query('category=="endocrine disruption"').query('category_strength > 9')[['property_title','name','prediction','known_value']].drop_duplicates()
+pdf['property_title'] = pdf['property_title'].map(lambda x: x[:50] if len(x) > 50 else x)
+
+heatmap_known = pdf.pivot_table(values='known_value', columns='name', index='property_title', fill_value=0) 
 heatmap_data = pdf.pivot_table(values='prediction', columns='name', index='property_title', fill_value=0)
 
 # Compute the cosine distance and perform hierarchical clustering
@@ -143,23 +148,50 @@ row_order = leaves_list(row_linkage)
 col_order = leaves_list(col_linkage)
 
 # Reorder the data
+heatmap_known = heatmap_known.iloc[row_order, col_order]
 heatmap_data = heatmap_data.iloc[row_order, col_order]
 
-# Plot the heatmap
-plt.figure(figsize=(12, 12))
-cmap = sns.diverging_palette(250, 10, s=75, l=40, n=3, center="dark", as_cmap=True)  # Adjusted palette to go from dark to red
-ax = sns.heatmap(heatmap_data, cmap=cmap, annot=False, square=True, fmt=".2f",
-                 linewidths=0.5, linecolor='black', cbar_kws={"shrink": .8})
+def build_plot(heatmap_known, heatmap_data):
+    # Create a custom colormap that handles -1 as a special color and ranges from blue (0) to red (1)
+    special_colors = ["#FFFFFF"]  # Black for -1
+    gradient_cmap = LinearSegmentedColormap.from_list("grad_cmap", ["#3182bd", "#de2d26"])  # Gradient from blue to red
 
-# Set the tick labels color for row and column names
-ax.tick_params(axis='x', colors='white')
-ax.tick_params(axis='y', colors='white')
+    # Combine the special color and gradient colormap
+    combined_colors = special_colors + [gradient_cmap(i / gradient_cmap.N) for i in range(gradient_cmap.N)]
+    combined_cmap = ListedColormap(combined_colors)
+    norm = BoundaryNorm([-1, 0, 1], len(combined_colors))
 
-# Improve the appearance of the colorbar
-cbar = ax.collections[0].colorbar
-cbar.set_label('Active Probability', color='white')
-cbar.ax.yaxis.set_tick_params(color='white')
-cbar.ax.yaxis.set_ticklabels([f'{x:.2f}' for x in cbar.get_ticks()], color='white')
+    # Create a figure with two axes, setting size in pixels
+    fig, (ax0, ax1) = plt.subplots(ncols=2, figsize=(4, 12), gridspec_kw={'wspace': 0.25})  # Reduce space between plots
 
-# Save the figure to a file
-plt.savefig('notebook/plots/test.png', facecolor='black', bbox_inches='tight', dpi=300)
+    # Plot heatmap for heatmap_known, make a cmap with -1 as white, 0 as "#3182bd" and red as "#de2d26"
+    known_cmap = ListedColormap(["#FFFFFF", "#3182bd", "#de2d26"])
+    sns.heatmap(heatmap_known, cmap=known_cmap, annot=False, square=True, fmt=".2f",
+                linewidths=0.5, linecolor='black', cbar=False, ax=ax0)
+    ax0.set_title('Known Data', color='white')
+    ax0.tick_params(axis='x', colors='white')
+    ax0.tick_params(axis='y', colors='white')
+
+    # Plot heatmap for heatmap_data
+    sns.heatmap(heatmap_data, cmap=gradient_cmap, annot=False, square=True, fmt=".2f",
+                linewidths=0.5, linecolor='black', cbar=False, ax=ax1)
+    ax1.set_title('Predicted Data', color='white')
+    ax1.tick_params(axis='x', colors='white')
+    ax1.tick_params(axis='y', left=False, labelleft=False)  # Remove y-axis labels
+    # remove y-axis title
+    ax1.set_ylabel('')
+
+    # Improve the appearance of the colorbar
+    # cbar = ax1.collections[0].colorbar
+    # cbar.set_label('Value', color='white')
+    # cbar.ax.yaxis.set_tick_params(color='white')
+    # cbar.ax.yaxis.set_ticklabels([f'{x:.2f}' for x in cbar.get_ticks()], color='white')
+
+    # Set background color to black
+    fig.patch.set_facecolor('black')
+
+    # Save the figure to a file
+    plt.savefig('notebook/plots/test.png', facecolor='black', bbox_inches='tight', dpi=300)
+
+
+build_plot(heatmap_known, heatmap_data)
