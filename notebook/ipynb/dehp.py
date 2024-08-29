@@ -191,6 +191,7 @@ def build_plot(heatmap_known, heatmap_data):
     fig.patch.set_facecolor('black')
 
     # Save the figure to a file
+    os.makedirs('notebook/plots', exist_ok=True)
     plt.savefig('notebook/plots/test.png', facecolor='black', bbox_inches='tight', dpi=300)
 
 
