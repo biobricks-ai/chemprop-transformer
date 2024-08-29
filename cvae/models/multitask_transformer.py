@@ -10,8 +10,6 @@ import tqdm
 from cvae.tokenizer.selfies_property_val_tokenizer import SelfiesPropertyValTokenizer
 import cvae.utils
 
-<<<<<<< HEAD
-=======
 class LearnedPositionalEncoding(nn.Module):
     def __init__(self, d_model, max_len=5000, dropout=0.1):
         super().__init__()
@@ -32,7 +30,6 @@ class LearnedPositionalEncoding(nn.Module):
         
         return self.dropout(x)
 
->>>>>>> first-moe
 class PositionalEncoding(nn.Module):
     def __init__(self, d_model, dropout=0.1, max_len=5000):
         super(PositionalEncoding, self).__init__()
