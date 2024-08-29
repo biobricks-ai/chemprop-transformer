@@ -1,6 +1,15 @@
 import torch, json, pathlib, numpy as np
 from cvae.tokenizer.selfies_tokenizer import SelfiesTokenizer
 
+# This tokenizer combines SELFIES encoding with property and value information.
+# It extends the SELFIES tokenization by adding tokens for assays and their values.
+# The tokenization process includes:
+# 1. Encoding the SELFIES string
+# 2. Adding a separator token
+# 3. Encoding assay IDs and their corresponding values
+# 4. Adding an end token
+# This allows for joint representation of molecular structure and associated properties.
+
 class SelfiesPropertyValTokenizer:
     
     def __init__(self, selfies_tokenizer: SelfiesTokenizer, num_assays, num_vals):
