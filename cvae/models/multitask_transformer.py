@@ -80,7 +80,7 @@ def generate_static_mask(selfies_sz: int, assayval_sz:int) -> torch.Tensor:
     
 class MultitaskTransformer(nn.Module):
     
-    def __init__(self, tokenizer, hdim=512, nhead=4, num_layers=4, dim_feedforward=512, dropout_rate=0.1, output_size=None):
+    def __init__(self, tokenizer, hdim=256, nhead=2, num_layers=4, dim_feedforward=256, dropout_rate=0.1, output_size=None):
         
         super().__init__()
         
@@ -92,7 +92,9 @@ class MultitaskTransformer(nn.Module):
         self.token_pad_idx = tokenizer.PAD_IDX
         
         self.embedding = nn.Embedding(tokenizer.vocab_size, self.hdim)
+        self.outemb = nn.Embedding(tokenizer.vocab_size, self.hdim)
         self.positional_encoding = PositionalEncoding(self.hdim)
+        # self.positional_encoding = LearnedPositionalEncoding(self.hdim)
         
         encode_args = {"d_model": self.hdim, "nhead": self.nhead, "dim_feedforward": self.dim_feedforward, "dropout": dropout_rate}
         encode_layer = nn.TransformerEncoderLayer(**encode_args, batch_first=True)
@@ -104,11 +106,12 @@ class MultitaskTransformer(nn.Module):
         self.decoder_norm = nn.LayerNorm(self.hdim)
         
         self.classification_layers = nn.Sequential(
-            nn.Linear(self.hdim, self.output_size),  # First layer upscales to dim_feedforward
-            nn.LeakyReLU(),  # Nonlinear activation
-            nn.Linear(self.output_size, self.output_size),  # Further processing layer
-            nn.LeakyReLU(),  # Nonlinear activation
-            nn.Linear(self.output_size, self.output_size)
+            # nn.Linear(self.hdim, self.dim_feedforward),  # First layer upscales to dim_feedforward
+            # nn.LeakyReLU(),  # Nonlinear activation
+            # nn.Linear(self.dim_feedforward, self.dim_feedforward // 2),  # Further processing layer
+            # nn.LeakyReLU(),  # Nonlinear activation
+            # nn.Linear(self.dim_feedforward // 2, self.output_size)  # Final layer to match output size
+            nn.Linear(self.hdim, self.output_size)
         )
 
 
@@ -119,7 +122,7 @@ class MultitaskTransformer(nn.Module):
         input_embedding = self.positional_encoding(self.embedding(input))
         input_encoding = self.encoder(input_embedding, src_key_padding_mask=memory_mask)
         
-        teach_forcing = self.positional_encoding(self.embedding(teach_forcing))
+        teach_forcing = self.positional_encoding(self.outemb(teach_forcing))
         tgt_mask = generate_custom_subsequent_mask(teach_forcing.size(1)).to(input.device)
         
         decoded = self.decoder(teach_forcing, input_encoding, tgt_mask=tgt_mask, memory_key_padding_mask=memory_mask)
@@ -134,7 +137,8 @@ class MultitaskTransformer(nn.Module):
         ce_lossfn = nn.CrossEntropyLoss(reduction='mean', ignore_index=ignore_index, label_smoothing=0.05)
         def lossfn(parameters, logits, output):
             ce_loss = ce_lossfn(logits, output)
-            return ce_loss
+            # l2 = sum(p.pow(2.0).sum() for p in parameters if p.requires_grad)
+            return ce_loss #+ weight_decay * l2
         return lossfn   
     
     @staticmethod
@@ -294,15 +298,12 @@ class LabelSmoothingCrossEntropySequence(nn.Module):
 
 class NoamLR(torch.optim.lr_scheduler._LRScheduler):
 
-    def __init__(self, optimizer, model_size, warmup_steps, last_epoch=-1, min_lr=1e-6, max_lr=1e-3):
+    def __init__(self, optimizer, model_size, warmup_steps, last_epoch=-1):
         self.model_size = model_size
         self.warmup_steps = warmup_steps
-        self.min_lr = min_lr
-        self.max_lr = max_lr
         super(NoamLR, self).__init__(optimizer, last_epoch)
 
     def get_lr(self):
         step_num = self.last_epoch + 1
         lr = self.model_size ** (-0.5) * min(step_num ** (-0.5), step_num * self.warmup_steps ** (-1.5))
-        lr = max(self.min_lr, min(lr, self.max_lr))
         return [base_lr * lr for base_lr in self.base_lrs]
