@@ -11,7 +11,7 @@ import matplotlib.gridspec as gridspec
 
 tqdm.pandas()
 
-predictor : Predictor = Predictor(sqlite3.connect('flask_cvae/predictions.sqlite'))
+predictor : Predictor = Predictor('flask_cvae/predictions.sqlite')
 def build_propdf():
     conn = sqlite3.connect('brick/cvae.sqlite')
     proptitle = pd.read_sql("SELECT property_token,title FROM property p", conn).groupby('property_token').first().reset_index()
@@ -19,14 +19,15 @@ def build_propdf():
         .merge(proptitle, on='property_token', how='inner')
 
     # remove poor performing properties
-    evaldf = pd.read_csv('data/metrics/multitask_metrics.csv')\
-        .rename(columns={'assay':'property_token'})\
-        .groupby('property_token').aggregate({'AUC':'median'})\
-        .query('AUC > .7')\
-        .reset_index()
+    # evaldf = pd.read_csv('data/metrics/multitask_metrics.csv')\
+    #     .rename(columns={'assay':'property_token'})\
+    #     .groupby('property_token').aggregate({'AUC':'median'})\
+    #     .query('AUC > .7')\
+    #     .reset_index()
 
     # remove irrelevant categories
-    return propdf.merge(evaldf, on='property_token', how='inner')\
+    # return propdf.merge(evaldf, on='property_token', how='inner')\
+    return propdf\
         .query('category != "kinetics (pharmacokinetics, toxicokinetics, adme, cmax, auc, etc)"')\
         .query('category != "chemical physical property"')\
         .rename(columns={'strength':'category_strength', 'title':'property_title','value':'known_value'})
@@ -49,6 +50,8 @@ alternatives = {
 
 altdf = pd.DataFrame(alternatives.items(), columns=['name','inchi'])
 altdf = altdf.assign(key=1).merge(propdf.assign(key=1), on='key').drop('key', axis=1)
+# TODO This is just for testing
+altdf = altdf.head(5)
 altdf['prediction'] = altdf.progress_apply(lambda x: predictor.cached_predict_property(x['inchi'], x['property_token']), axis=1)
 
 known_dfs = []

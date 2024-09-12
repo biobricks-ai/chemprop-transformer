@@ -50,6 +50,13 @@ class Predictor:
         self.all_property_tokens = [r['property_token'] for r in conn.execute("SELECT DISTINCT property_token FROM property")]
         conn.close()
         self.psqlite = psqlite
+        self.init_prediction_db()
+    
+    def init_prediction_db(self):
+        conn = sqlite3.connect(self.psqlite)
+        conn.execute("CREATE TABLE IF NOT EXISTS prediction (inchi TEXT, property_token INTEGER, value float)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_inchi_property_token ON prediction (inchi, property_token)")
+        conn.close()
     
     def _get_all_properties(self):
         conn = sqlite3.connect(self.dburl)
@@ -149,10 +156,12 @@ class Predictor:
         return np.mean(predictions[:, one_index], axis=0)
     
     def cached_predict_property(self, inchi, property_token):
-        prediction = Prediction.get(inchi, property_token, self.psqlite)
+        conn = sqlite3.connect(self.psqlite)
+        prediction = Prediction.get(inchi, property_token, conn)
         if prediction is not None: 
             return prediction.value
         
         prediction = float(self.predict_property(inchi, property_token))
-        Prediction.save(inchi, property_token, prediction, self.psqlite)
+        Prediction.save(inchi, property_token, prediction, conn)
+        conn.close()
         return prediction
