@@ -1,0 +1,34 @@
+\documentclass{article}
+
+% Use standard packages
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{graphicx}
+
+% Title information
+\title{Your Paper Title}
+\author{Your Name}
+\date{}  % Remove this line if you want to include the current date
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+Your abstract goes here.
+\end{abstract}
+
+% Import sections from ./sections
+\input{sections/introduction}
+\input{sections/methods}
+\input{sections/results}
+\input{sections/discussion}
+\input{sections/conclusion}
+
+% References
+\begin{thebibliography}{9}
+% Add your references here in numerical order
+\bibitem{ref1} Author, A. (Year). Title of the paper. Journal Name, Volume(Issue), Pages.
+\end{thebibliography}
+
+\end{document}
