@@ -1,12 +1,5 @@
 stages:
   
-  # requirements:
-  #   cmd: bash code/0_Requirements.sh
-  #   deps:
-  #   - requirements.txt
-  #   outs:
-  #   - .dvc/cache
-
   preprocess:
     cmd: python code/1_preprocess.py
     deps:

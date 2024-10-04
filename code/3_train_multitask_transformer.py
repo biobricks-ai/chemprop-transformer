@@ -166,9 +166,9 @@ print(f"{trainable_params/1e9} billion parameters")
 # model = torch.nn.DataParallel(model)
 
 trnds = mt.SequenceShiftDataset("data/tensordataset/multitask_tensors/trn", tokenizer, nprops=5)
-trndl = torch.utils.data.DataLoader(trnds, batch_size=32*8, shuffle=True, prefetch_factor=20000, num_workers=80)
+trndl = torch.utils.data.DataLoader(trnds, batch_size=32*8, shuffle=True, prefetch_factor=20000, num_workers=60)
 valds = mt.SequenceShiftDataset("data/tensordataset/multitask_tensors/tst", tokenizer, nprops=5)
-valdl = torch.utils.data.DataLoader(valds, batch_size=32*8, shuffle=True, prefetch_factor=20000, num_workers=80)
+valdl = torch.utils.data.DataLoader(valds, batch_size=32*8, shuffle=True, prefetch_factor=20000, num_workers=60)
 
 input, teach_forcing, out = next(iter(valdl))
 input, teach_forcing, out = input.to(DEVICE), teach_forcing.to(DEVICE), out.to(DEVICE)

@@ -51,7 +51,7 @@ alternatives = {
 altdf = pd.DataFrame(alternatives.items(), columns=['name','inchi'])
 altdf = altdf.assign(key=1).merge(propdf.assign(key=1), on='key').drop('key', axis=1)
 # TODO This is just for testing
-altdf = altdf.head(5)
+# altdf = altdf.head(5)
 altdf['prediction'] = altdf.progress_apply(lambda x: predictor.cached_predict_property(x['inchi'], x['property_token']), axis=1)
 
 known_dfs = []

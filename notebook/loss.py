@@ -13,7 +13,7 @@ batch_skip = int(args[0]) if len(args) > 0 else 0
 
 def draw_plot(last_scheduler_length=0):
     # Read the first three columns of the metrics file
-    data = pd.read_csv('metrics/multitask_loss.tsv', sep='\t', names=['epoch', 'batch', 'type', 'loss', 'lr'], skiprows=1)
+    data = pd.read_csv('metrics/multitask_loss.tsv', sep='\t', names=['type', 'batch', 'loss', 'lr'], header=None, skiprows=1)
     data['type'] = data['type'].replace('scheduler', 'sched')
     scheduler_length = len(data[data['type'] == 'train']['loss'])
     
