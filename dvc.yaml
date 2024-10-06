@@ -26,16 +26,16 @@ stages:
     outs:
     - brick/moe
 
-  evaluate:
-    cmd: python code/5_1_eval_multi_properties.py
-    deps:
-    - code/5_1_eval_multi_properties.py
-    - brick/moe
-    - brick/selfies_property_val_tokenizer/
-    - data/tensordataset/multitask_tensors/hld
-    outs:
-    - data/metrics/multitask_predictions.csv
-    - data/metrics/multitask_metrics.csv
+  # evaluate:
+  #   cmd: python code/5_1_eval_multi_properties.py
+  #   deps:
+  #   - code/5_1_eval_multi_properties.py
+  #   - brick/moe
+  #   - brick/selfies_property_val_tokenizer/
+  #   - data/tensordataset/multitask_tensors/hld
+  #   outs:
+  #   - data/metrics/multitask_predictions.csv
+  #   - data/metrics/multitask_metrics.csv
   
   sqlite:
     cmd: python code/6_build_sqlite.py
