@@ -3,9 +3,10 @@ from cvae.models.multitask_transformer import PositionalEncoding, generate_custo
 import cvae.utils
 
 class MoE(nn.Module):
+    
     def __init__(self, tokenizer, num_experts=2, hdim=256):
         super().__init__()
-        self.tokenizer = tokenizer
+        self.tokenizer : SelfiesPropertyValTokenizer = tokenizer
         self.experts = nn.ModuleList([MultitaskTransformer(tokenizer, hdim) for _ in range(num_experts)])
         self.gating_network = MultitaskTransformer(tokenizer, hdim, output_size=num_experts)
 

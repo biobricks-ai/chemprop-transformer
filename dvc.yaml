@@ -40,6 +40,8 @@ stages:
   sqlite:
     cmd: python code/6_build_sqlite.py
     deps:
-    - code/6_build_sqlite.py
+      - code/6_build_sqlite.py
+      - brick/selfies_property_val_tokenizer
+      - data/processed/activities.parquet
     outs:
-    - brick/cvae.sqlite
+      - brick/cvae.sqlite

@@ -64,3 +64,25 @@ stages:
       md5: 367be0bb42100eca4255aba27159f9f6.dir
       size: 117354730
       nfiles: 3
+  sqlite:
+    cmd: python code/6_build_sqlite.py
+    deps:
+    - path: brick/selfies_property_val_tokenizer
+      hash: md5
+      md5: a5f26300d43785c97178b0e096e6f8c5.dir
+      size: 83833
+      nfiles: 2
+    - path: code/6_build_sqlite.py
+      hash: md5
+      md5: 7c5d4001b25218edc93d8531206b746e
+      size: 5633
+    - path: data/processed/activities.parquet
+      hash: md5
+      md5: 829823dd95ab0fc5d23dacc658e24247.dir
+      size: 2959536725
+      nfiles: 402
+    outs:
+    - path: brick/cvae.sqlite
+      hash: md5
+      md5: b1fdb04a4e23188c1eb457ee3fb80b16
+      size: 11035492352
