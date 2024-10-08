@@ -1,14 +1,30 @@
 import itertools, uuid
 import pandas as pd, tqdm, sklearn.metrics, torch, numpy as np, os
 import cvae.tokenizer, cvae.models.multitask_transformer as mt, cvae.utils, cvae.models.mixture_experts as me
+from cvae.tokenizer import SelfiesPropertyValTokenizer
+from pyspark.sql.functions import col, when, countDistinct
+from pyspark.sql import functions as F
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import split, col, when
 
 tqdm.tqdm.pandas()
 DEVICE = torch.device(f'cuda:0')
 outdir = cvae.utils.mk_empty_directory("data/metrics", overwrite=True)
-tokenizer = cvae.tokenizer.SelfiesPropertyValTokenizer.load('brick/selfies_property_val_tokenizer')
-# model = mt.MultitaskTransformer.load("brick/mtransform3_nprops1").to(DEVICE)
-model = me.MoE.load("brick/moe").to(DEVICE)
+model : me.MoE = me.MoE.load("brick/moe").to(DEVICE)
 model = torch.nn.DataParallel(model)
+tokenizer : SelfiesPropertyValTokenizer = model.module.tokenizer
+
+spark = SparkSession.builder.appName("MultitaskPredictions") \
+    .config("spark.driver.memory", "64g") \
+    .config("spark.driver.maxResultSize", "16g") \
+    .config("spark.executor.memory", "64g") \
+    .config("spark.executor.instances", "4") \
+    .config('spark.locality.wait', '0s') \
+    .config('spark.local.dir', '/tmp/spark-temp') \
+    .config("spark.dynamicAllocation.enabled", "true") \
+    .config("spark.shuffle.service.enabled", "true") \
+    .getOrCreate()
+
 
 # EVALUATION LOOP ===================================================================
 assay_indexes = torch.tensor(list(tokenizer.assay_indexes().values()), device=DEVICE)
@@ -75,50 +91,69 @@ def run_eval(i, raw_inp, raw_out, out_df, nprops):
     
     return pd.concat([out_df, batch_df]) if len(out_df) > 0 else batch_df
 
-batch_size = 32
+os.makedirs("data/metrics/temp", exist_ok=True)
+batch_size = 16
 nprops = 5
 val = mt.SequenceShiftDataset("data/tensordataset/multitask_tensors/hld", tokenizer, nprops=nprops)
 valdl = torch.utils.data.DataLoader(val, batch_size=batch_size, shuffle=False)
-out_df = pd.DataFrame({'chemical_id':[], 'prior_assays':[], 'prior_values':[], 'assay':[], 'value':[], 'probs':[], 'nprops':[], 'prob_assays':[], 'prob_vals':[]})
+seen_inputs = set()
 
-# create tempdir
-os.makedirs("data/metrics/temp", exist_ok=True)
-for epoch in tqdm.tqdm(range(100)):
+for iter in tqdm.tqdm(range(24)):
+    out_df = pd.DataFrame({'chemical_id':[], 'prior_assays':[], 'prior_values':[], 'assay':[], 'value':[], 'probs':[], 'nprops':[], 'prob_assays':[], 'prob_vals':[]})
     for i, (raw_inp, _, raw_out) in tqdm.tqdm(enumerate(valdl), total=len(val)/batch_size):
-        out_df = run_eval(i, raw_inp, raw_out, out_df, nprops)
+        batch_tuples = tuple(map(lambda x, y: (tuple(x.tolist()), tuple(y.tolist())), raw_inp, raw_out))
+        new_inputs_mask = [t not in seen_inputs for t in batch_tuples]
+        seen_inputs.update(batch_tuples)
+        
+        if any(new_inputs_mask):
+            new_raw_inp = raw_inp[new_inputs_mask]
+            new_raw_out = raw_out[new_inputs_mask]
+            current_df = run_eval(i, new_raw_inp, new_raw_out, pd.DataFrame(), nprops)
+            out_df = pd.concat([out_df, current_df], ignore_index=True)
+        
+        if len(out_df) > 1000000:
+            out_df.to_parquet(f"data/metrics/temp/multitask_predictions_{str(uuid.uuid4())}.parquet", index=False)
+            out_df = pd.DataFrame({'chemical_id':[], 'prior_assays':[], 'prior_values':[], 'assay':[], 'value':[], 'probs':[], 'nprops':[], 'prob_assays':[], 'prob_vals':[]})
 
-    out_df.drop_duplicates(subset=['chemical_id', 'prior_assays'],inplace=True)
-    out_df.to_csv(f"data/metrics/temp/multitask_predictions_{str(uuid.uuid4())}.csv", index=False)
+    if not out_df.empty:
+        out_df.to_parquet(f"data/metrics/temp/multitask_predictions_{str(uuid.uuid4())}.parquet", index=False)
+
+df0 = spark.read.parquet("data/metrics/temp/*.parquet")
+df1 = df0.withColumn("prior_assays", split(col("prior_assays"), " \+ ")) 
+df1.write.parquet("data/metrics/multitask_predictions.parquet", mode="overwrite")
+
+# GENERATE STRATIFIED EVALUATIONS FOR POSITION 0-5 ===============================
+outdf = spark.read.parquet("data/metrics/multitask_predictions.parquet")
+
+# Calculate metrics
+value_indexes = torch.tensor(list(tokenizer.value_indexes().values()), device=DEVICE)
+val0_index, val1_index = value_indexes[0].item(), value_indexes[1].item()
+
+from sklearn.metrics import roc_auc_score, accuracy_score, balanced_accuracy_score, log_loss
+def calculate_metrics(y_true, y_pred):
+    y_true = np.array(y_true)
+    y_true_binary = (y_true != val0_index).astype(int)
+    y_pred = np.array(y_pred)
+    y_pred_binary = (y_pred > 0.5).astype(int)
+    
+    auc = float(roc_auc_score(y_true_binary, y_pred))
+    acc = float(accuracy_score(y_true_binary, y_pred_binary))
+    bac = float(balanced_accuracy_score(y_true_binary, y_pred_binary))
+    ce_loss = float(log_loss(y_true_binary, y_pred))
+    return auc, acc, bac, ce_loss
 
 
-# read all the temp files and concatenate them
-out_df = pd.concat([pd.read_csv(f"data/metrics/temp/{x}") for x in os.listdir("data/metrics/temp")])
-out_df['prior_assays'] = out_df['prior_assays'].progress_apply(lambda x: x.split(' + '))
-out_df.drop_duplicates(subset=['chemical_id', 'prior_assays'],inplace=True)
+calculate_metrics_udf = F.udf(calculate_metrics, "struct<AUC:double, ACC:double, BAC:double, cross_entropy_loss:double>")
+large_properties_df = outdf.groupBy('nprops', 'assay').agg(
+    F.collect_list('value').alias('y_true'),
+    F.collect_list('probs').alias('y_pred'),
+    countDistinct('chemical_id').alias('nchem'),
+    F.sum(when(col('value') == val1_index, 1).otherwise(0)).alias('NUM_POS'),
+    F.sum(when(col('value') == val0_index, 1).otherwise(0)).alias('NUM_NEG')) \
+    .filter((col('NUM_POS') >= 10) & (col('NUM_NEG') >= 10) & (col('nchem') >= 20)).cache()
 
-out_df.to_csv("data/metrics/multitask_predictions.csv", index=False)
+metrics_df = large_properties_df.repartition(800) \
+    .withColumn('metrics', calculate_metrics_udf(F.col('y_true'), F.col('y_pred'))) \
+    .select('nprops', 'assay', col('metrics.AUC').alias('AUC'), col('metrics.ACC').alias('ACC'), col('metrics.BAC').alias('BAC'), col('metrics.cross_entropy_loss').alias('cross_entropy_loss'), 'NUM_POS', 'NUM_NEG')
 
-sum(out_df['assay'] == out_df['prob_assays']) / len(out_df)
-sum(out_df['value'] == out_df['prob_vals']) / len(out_df)
-
-# GENERATE STRATIFIED EVALUATIONS FOR POSITION 0-9 ===============================
-assay_metrics = []
-grouped = out_df.groupby(['nprops','assay'])
-for (position,assay), group in tqdm.tqdm(grouped):
-    y_true, y_pred = group['value'].values, group['probs'].values
-    y_true = np.array([0 if x == 6170 else 1 for x in y_true])
-    nchem = len(group['chemical_id'].unique())
-    if sum(y_true==0) < 10 or sum(y_true==1) < 10 or nchem < 20 : continue
-    assay_metrics.append({
-        'nprops': position, 
-        'assay': assay, 
-        'AUC': sklearn.metrics.roc_auc_score(y_true, y_pred), 
-        'ACC': sklearn.metrics.accuracy_score(y_true, y_pred > 0.5),
-        'BAC': sklearn.metrics.balanced_accuracy_score(y_true, y_pred > 0.5),
-        'cross_entropy_loss': sklearn.metrics.log_loss(y_true, y_pred),
-        "NUM_POS": sum(y_true==1), 
-        "NUM_NEG": sum(y_true==0)})
-
-metrics_df = pd.DataFrame(assay_metrics)
-metrics_df.sort_values(by=['AUC'], inplace=True, ascending=False)
-metrics_df.to_csv("data/metrics/multitask_metrics.csv", index=False)
+metrics_df.write.parquet("data/metrics/multitask_metrics.parquet", mode="overwrite")

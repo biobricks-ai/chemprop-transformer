@@ -232,10 +232,9 @@ class SequenceShiftDataset(torch.utils.data.Dataset):
         idxdata = self.data[file_idx]
         selfies_raw, raw_assay_vals = idxdata[0][idx], idxdata[1][idx]
         
-        # remove padding from selfies
-        # selfies = selfies_raw[selfies_raw != self.pad_idx]
-
-        # assay_val munging - unpad, randomly permute, add sos/eos tokens
+        return self.selfies_and_assay_vals_to_tensor(selfies_raw, raw_assay_vals)
+    
+    def selfies_and_assay_vals_to_tensor(self, selfies_raw, raw_assay_vals):
         assay_vals = raw_assay_vals[raw_assay_vals != self.pad_idx][1:-1]
         reshaped_av = assay_vals.reshape(assay_vals.size(0) // 2, 2)
         av_shuffled = reshaped_av[torch.randperm(reshaped_av.size(0)),:].reshape(assay_vals.size(0))
@@ -256,8 +255,7 @@ class SequenceShiftDataset(torch.utils.data.Dataset):
         # inp = selfies_raw # F.pad(selfies, (0, 119 - selfies.size(0)), value=self.pad_idx)
         # inp = torch.hstack([selfies, torch.tensor([self.sep_idx]), av_shuffled[2:4]])
         inp = selfies_raw
-        # pad_inp = F.pad(inp, (0, 126 - inp.size(0)), value=self.pad_idx)
-        
+
         return inp, tch, out
 
 class LabelSmoothingCrossEntropySequence(nn.Module):

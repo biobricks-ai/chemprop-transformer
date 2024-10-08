@@ -9,12 +9,12 @@ prop_src = pd.read_sql("SELECT property_token,title,source FROM property p INNER
 prop_src = prop_src.groupby('property_token').first().reset_index()
 
 # pull in multitask_metrics
-evaldf = pd.read_csv('data/metrics/multitask_metrics.csv')\
+evaldf = pd.read_parquet('data/metrics/multitask_metrics.parquet')\
     .merge(prop_src, left_on='assay', right_on='property_token', how='inner')
 
 # get the median AUC for each property
 evaldf.aggregate({'AUC': 'median','cross_entropy_loss':'median','assay':'count'}) # 89% median auc, .482 median cross entropy loss
-evaldf.groupby(['source','nprops']).aggregate({'AUC': 'median','assay':'count'}).sort_values(by='AUC',ascending=False)
+res = evaldf.groupby(['source','nprops']).aggregate({'AUC': 'median','assay':'count'}).sort_values(by='AUC',ascending=False)
 evaldf[evaldf['source'] == 'tox21'].groupby(['nprops']).aggregate({'AUC': 'median','assay':'count'}).sort_values(by='AUC',ascending=False)
 #              AUC  assay
 # nprops                 
@@ -32,7 +32,7 @@ pcat = pd.read_sql("""SELECT s.source, property_token,title,category,strength FR
                        INNER JOIN source s on p.source_id = s.source_id """, 
                        conn)
     
-evalcat = pd.read_csv('data/metrics/multitask_metrics.csv')\
+evalcat = pd.read_parquet('data/metrics/multitask_metrics.parquet')\
     .merge(pcat, left_on='assay', right_on='property_token', how='inner')\
     .query('strength > 8.0')
 

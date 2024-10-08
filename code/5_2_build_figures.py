@@ -2,10 +2,10 @@ import matplotlib.pyplot as plt, pandas as pd, seaborn as sns
 import random
 
 # SETUP =================================================================================
-df = pd.read_csv('data/metrics/multitask_metrics.csv')
+df = pd.read_parquet('data/metrics/multitask_metrics.parquet')
 df.aggregate({'AUC': 'median', 'ACC': 'median', 'BAC': 'median', "cross_entropy_loss": 'median'})
-
-df[df['NUM_POS'] > 100].groupby('nprops').aggregate({'AUC': 'median', 'ACC': 'median', 'BAC': 'median', "cross_entropy_loss": 'median'})
+df.groupby('nprops').aggregate({'AUC': 'median', 'ACC': 'median', 'BAC': 'median', "cross_entropy_loss": 'median', 'assay': 'nunique'})
+df[df['NUM_POS'] > 100].groupby('nprops').aggregate({'AUC': 'median', 'ACC': 'median', 'BAC': 'median', "cross_entropy_loss": 'median', 'assay': 'nunique'})
 
 # how many assays?
 df['assay'].nunique()
@@ -37,48 +37,3 @@ def auc_histogram(df,nprops):
     plt.savefig('notebook/plots/multitask_transformer_metrics.png', facecolor='none', transparent=True)
 
 auc_histogram(df, nprops=5)
-
-# AUC BY POSITION =======================================================================
-## select assays that appear with all values of nprops
-
-assays = df.groupby('assay').filter(lambda x: x['nprops'].nunique() == 5)['assay'].unique()
-posdf = df[df['assay'].isin(assays)]
-posdf.sort_values(by=['assay', 'nprops'], inplace=True)
-
-# Get the median AUC by nprops
-median_df = posdf.groupby(['nprops']).agg({'AUC': 'median'}).reset_index()
-
-# Randomly select up to 1000 assays
-sampled_assays = random.sample(list(assays), min(1000, len(assays)))
-sampled_df = posdf[posdf['assay'].isin(sampled_assays)]
-
-plt.style.use('dark_background')
-plt.figure(figsize=(12, 6))
-
-# Create line plot for randomly selected assays
-sns.lineplot(data=sampled_df, x='nprops', y='AUC', units='assay', estimator=None, linewidth=0.5, alpha=0.3, color='gray')
-
-# Create line plot for median AUC with points
-sns.lineplot(data=median_df, x='nprops', y='AUC', linewidth=3, color='orange', label='Median AUC', marker='o', markersize=8)
-sns.pointplot(data=median_df, x='nprops', y='AUC', color='orange')
-
-# Adding labels and title
-plt.title('Distribution of AUC Differences by Nprops Compared to Nprop=0', fontsize=18, color='white')
-plt.xlabel('Nprops', fontsize=14, color='white')
-plt.ylabel('AUC Difference from Nprop=0', fontsize=14, color='white')
-
-# Customizing ticks and adding a horizontal line at 0
-plt.xticks(range(5), fontsize=12, color='white')
-plt.yticks(fontsize=12, color='white')
-plt.axhline(0, color='white', linestyle='--', linewidth=1)
-plt.grid(color='gray', linestyle='dashed', linewidth=0.5, alpha=0.5)
-
-# only show from 0 to 4 (don't add any margin)
-plt.xlim(0, 4)
-plt.ylim(0.6,1.0)
-
-plt.legend(fontsize=12)
-plt.tight_layout()
-
-# Assuming the save path matches your setup
-plt.savefig('notebook/plots/auc_diff_by_nprops.png', facecolor='black')
