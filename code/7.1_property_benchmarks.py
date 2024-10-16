@@ -1,8 +1,13 @@
-import pandas as pd, sqlite3, seaborn as sns, matplotlib.pyplot as plt, os, pathlib, numpy as np
+import pandas as pd, sqlite3, seaborn as sns, matplotlib.pyplot as plt, os, pathlib, numpy as np, sys
+sys.path.append('./')
 import cvae.tokenizer, cvae.models.multitask_transformer as mt, cvae.utils, cvae.models.mixture_experts as me
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from cvae.tokenizer import SelfiesPropertyValTokenizer
+from sklearn.metrics import balanced_accuracy_score, roc_auc_score, recall_score
 import torch
 from tqdm import tqdm
+from joblib import Parallel, delayed
+from tqdm.auto import tqdm
 tqdm.pandas()
 
 outdir = pathlib.Path("data/property_benchmarks")
@@ -20,6 +25,8 @@ conn = sqlite3.connect('brick/cvae.sqlite')
 prop_src = pd.read_sql("SELECT property_token,title,source FROM property p INNER JOIN source s on p.source_id = s.source_id", conn)
 prop_src = prop_src.groupby('property_token').first().reset_index()
 
+# Converts 2_build_tensordataset.py .pt files into df 
+# @return dataframe with columns -> [ selfies_str, selfies : tensor, assay : int, value : int ]
 def tensors_to_df(tensor_dir = pathlib.Path("data/tensordataset/multitask_tensors/hld")):
     tensors = [torch.load(file) for file in tqdm(list(tensor_dir.iterdir()))]
     df = pd.DataFrame([
@@ -28,11 +35,8 @@ def tensors_to_df(tensor_dir = pathlib.Path("data/tensordataset/multitask_tensor
         for selfie, assay_val in zip(tensor['selfies'], tensor['assay_vals'])
     ])
 
-    # check that all the selfies are unique, handle the fact that selfies are lists
     df['selfies_str'] = df['selfies'].progress_apply(lambda x: ' '.join(map(str, x)))
-    assert df['selfies_str'].nunique() == len(df), "Selfies are not unique"
 
-    # Process the assay_vals column
     def process_assay_vals(assay_vals):
         # Ignore the first and last values, and remove all zeros
         processed = [val for val in assay_vals[1:] if val != 0]
@@ -67,13 +71,13 @@ assert not trn_df['selfies_str'].isin(hld_df['selfies_str']).any(), "There is ov
 trn_df = pd.read_parquet(outdir / "trn_df.parquet")
 hld_df = pd.read_parquet(outdir / "hld_df.parquet")
 
-# get some tox21 properties
-tox21_props = prop_src[prop_src['source'] == 'tox21']['property_token'].tolist()
-
 # this finds informative, non-redundant features for a given property-token
 def find_features_for_properties(property : int):
     # 1. Filter trndf to the given property
     property_df = trn_df[trn_df['assay'] == property]
+    
+    # sample property_df to 1000 rows max 
+    property_df = property_df.sample(n=min(1000, len(property_df)), replace=False)
     
     # 2. Join it with trndf on selfies_str
     joined_df = property_df.merge(trn_df[['selfies_str', 'assay','value']], on='selfies_str', suffixes=('_x', '_y'))
@@ -90,11 +94,11 @@ def find_features_for_properties(property : int):
         entropy = -sum(p * np.log2(p) for p in probs if p > 0)
         return entropy
 
-    entropy_df = joined_counts.groupby(['assay_y','counts']).progress_apply(calculate_entropy).reset_index()
+    entropy_df = joined_counts.groupby(['assay_y','counts']).apply(calculate_entropy).reset_index()
     entropy_df.columns = ['assay_y', 'counts','entropy']
     entropy_df = entropy_df.sort_values('entropy', ascending=True)
 
-    non_redundant_features = entropy_df[entropy_df['entropy'] > 0.1]['assay_y']
+    non_redundant_features = entropy_df[entropy_df['entropy'] > 0.025]['assay_y']
     
     # 5. Remove features that provide no information
     max_entropy = np.log2(2)  # Entropy of a binary random variable (completely non-informative)
@@ -105,9 +109,9 @@ def find_features_for_properties(property : int):
     
     return list(useful_features)
 
-def build_selfies_assay_vals_tensors(selfies_str, property_token, features_df, nprops=5, ntensors=1):
+def build_selfies_assay_vals_tensors(property_token, features, values, nprops=5, ntensors=1):
     # Filter features_df to the input selfies_str
-    filtered_df = features_df[features_df['selfies_str'] == selfies_str]
+    filtered_df = pd.DataFrame({'assay_y': features, 'value_y': values})
     
     # Initialize list to store our tensors
     X = []
@@ -146,9 +150,9 @@ def build_selfies_assay_vals_tensors(selfies_str, property_token, features_df, n
     
     return X
 
-def evaluate_selfies_predictions(selfies_str, sf_tensor, property_token, features_df, nprops=4, ntensors=1):
+def evaluate_selfies_predictions(sf_tensor, property_token, features, values, nprops=4):
     
-    av_tensors = build_selfies_assay_vals_tensors(selfies_str, property_token, features_df, nprops, ntensors=10).to(DEVICE)
+    av_tensors = build_selfies_assay_vals_tensors(property_token, features, values, nprops, ntensors=10).to(DEVICE)
     rep_sf_tensor = sf_tensor.unsqueeze(0).repeat(av_tensors.shape[0], 1).to(DEVICE)
     
     with torch.no_grad():
@@ -156,37 +160,51 @@ def evaluate_selfies_predictions(selfies_str, sf_tensor, property_token, feature
     
     # get the values of val_index_0 and val_index_1
     val0index, val1index = tokenizer.value_indexes()[0], tokenizer.value_indexes()[1]
-    val_logits = preds[:, 11, [val0index,val1index]] 
+    val_logits = preds[:, 10, [val0index,val1index]] 
     val_probs = torch.nn.functional.softmax(val_logits, dim=1)
     mean_pred = val_probs[:,1].mean()
     return mean_pred.item()
 
 # this evaluates a property-token by using the trained model to evaluate it with randomly selected features
-def evaluate_property(property : int):
-    df = hld_df[hld_df['assay'] == property]
-    features = find_features_for_properties(property)
-    features_df = hld_df[hld_df['assay'].isin(features)]
+def evaluate_property(property_token : int, features : list[int]):
+    df = hld_df[hld_df['assay'] == property_token]
+    features_df = hld_df[hld_df['assay'].isin(features)][['selfies_str','assay','value']]
     features_df = df.merge(features_df, on='selfies_str')
     
     sf_preds = []
+    df = df.sample(n=min(100, len(df)), replace=False)
     for index in tqdm(range(len(df))):
+        
+        # get all the features for this selfies_str
         selfies_str = df['selfies_str'].iloc[index]
+        selfies_df = features_df[features_df['selfies_str'] == selfies_str]
+        
+        features, values = selfies_df['assay_y'].tolist(), selfies_df['value_y'].tolist()
         sf_tensor = torch.tensor(df['selfies'].iloc[index], dtype=torch.long)
-        value = df['value'].iloc[index]
-        value = 0 if value == tokenizer.value_indexes()[0] else 1
-        pred = evaluate_selfies_predictions(selfies_str, sf_tensor, property, features_df)
+        
+        pred = evaluate_selfies_predictions(sf_tensor, property_token, features, values)
+        value = 0 if df['value'].iloc[index] == tokenizer.value_indexes()[0] else 1
+        
         sf_preds.append({'value': value, 'pred': pred})
     
     pdf = pd.DataFrame(sf_preds)[['value','pred']]
     pdf['binary_pred'] = (pdf['pred'] > 0.5).astype(int)
     accuracy = (pdf['value'] == pdf['binary_pred']).mean()
+    balanced_accuracy = balanced_accuracy_score(pdf['value'], pdf['binary_pred'])
+    auc = roc_auc_score(pdf['value'], pdf['pred'])
+    print(f"Accuracy: {accuracy:.3f}, Balanced Accuracy: {balanced_accuracy:.3f}, AUC: {auc:.3f}")
     
-    # group by selfies_str, count, and sort descending
-    tst = df.groupby('selfies_str').size().reset_index(name='counts')
-    tst = tst.sort_values('counts', ascending=False)
-    
-    return hld_df_property['value'].mean()
+    return {'accuracy': accuracy, 'balanced_accuracy': balanced_accuracy, 'auc': auc}
 
-tmp = prop_src.merge(shared_props_df, left_on='property_token', right_on='assay_y').sort_values('entropy', ascending=True)
-tmp.to_csv('temp.csv', index=False)
+
+results = []
+for _, row in tqdm(list(prop_src.iterrows())):
+    property_token = row['property_token']
+    features = find_features_for_properties(property_token)
+    eval = evaluate_property(property_token, features)
+    results.append({**row.to_dict(), **eval})
+
+df = pd.DataFrame(results)
+# median auc
+df['auc'].median()
 print(f"Data has been written to temp.csv")
