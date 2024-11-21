@@ -1,0 +1,25 @@
+{
+    "name": "CVAE Project",
+    "dockerFile": "Dockerfile",
+    "context": "..",
+    "settings": {
+        "terminal.integrated.defaultProfile.linux": "bash"
+    },
+    "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "ms-azuretools.vscode-docker",
+        "insilica.pycmd"
+    ],
+    "remoteUser": "vscode",
+    "mounts": [
+        "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=cached"
+    ],
+    "workspaceFolder": "/workspace",
+    "overrideCommand": true,
+    "entrypoint": "/bin/bash",
+    "runArgs": [
+        "--gpus",
+        "all"
+    ]
+}
