@@ -1,6 +1,7 @@
 # docker build -t biobricks-ai/cvae .
 # docker run -p 6515:6515 -v .:/chemsim --rm --gpus all -it --name chemsim biobricks-ai/cvae
-# curl "http://localhost:6515/predict?inchi=InChI=1S/C9H8O4/c1-6(10)13-8-5-3-2-4-7(8)9(11)12/h2-5H,1H3,(H,11,12)" 
+# docker run -p 6515:6515 --rm --gpus all -it --name chemsim biobricks-ai/cvae bash
+# curl "http://localhost:6515/predict?/predict?property_token=5042&inchi=InChI=1S/C9H8O4/c1-6(10)13-8-5-3-2-4-7(8)9(11)12/h2-5H,1H3,(H,11,12)""
 FROM nvidia/cuda:12.3.1-base-ubuntu20.04
 
 # Set a noninteractive frontend to prevent prompts
@@ -34,18 +35,26 @@ RUN apt-get install -y libxrender1
 COPY flask_cvae/requirements.txt requirements.txt
 RUN pip install --trusted-host pypi.python.org -r requirements.txt
 
-# Copy the necessary resources
-# COPY brick/moe brick/moe
-# COPY brick/cvae.sqlite brick/cvae.sqlite
-# COPY brick/selfies_property_val_tokenizer brick/selfies_property_val_tokenizer
-
-# Expose the port the app runs on
-EXPOSE 6515
+# Copy the app
+RUN mkdir -p app
+COPY flask_cvae app/flask_cvae
 
 # Command to run the application
 ENV FLASK_APP=flask_cvae.app
 ENV ROOT_URL=http://localhost:6515
 
+# Copy the necessary resources
+COPY brick/moe app/brick/moe
+COPY brick/cvae.sqlite app/brick/cvae.sqlite
+COPY brick/selfies_property_val_tokenizer app/brick/selfies_property_val_tokenizer
+
+# Expose the port the app runs on
+EXPOSE 6515
+
+# add the cvae module
+COPY cvae app/cvae
+
 # Start the container with a bash shell
-WORKDIR /chemsim
+WORKDIR /app
 CMD ["gunicorn", "-b", "0.0.0.0:6515", "--timeout", "480", "--graceful-timeout", "480", "--workers", "1", "flask_cvae.app:app"]
+# gunicorn -b 0.0.0.0:6515 --timeout 480 --graceful-timeout 480 --workers 1 flask_cvae.app:app

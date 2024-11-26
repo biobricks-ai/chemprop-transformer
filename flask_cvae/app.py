@@ -2,7 +2,10 @@ from flask import Flask, request, jsonify
 import sqlite3
 import threading
 import logging
-from .predictor import Predictor, Prediction
+
+import sys
+sys.path.append('./flask_cvae')
+from flask_cvae.predictor import Predictor, Prediction
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, 
@@ -13,14 +16,8 @@ predict_lock = threading.Lock()
 cvaesql = sqlite3.connect('brick/cvae.sqlite')
 cvaesql.row_factory = sqlite3.Row  # This enables column access by name
 
-psqlite = sqlite3.connect('flask_cvae/predictions.sqlite')
-cmd = "CREATE TABLE IF NOT EXISTS prediction (inchi TEXT, property_token INTEGER, value float)"
-psqlite.execute(cmd)
-cmd = "CREATE INDEX IF NOT EXISTS idx_inchi_property_token ON prediction (inchi, property_token)"
-psqlite.execute(cmd)
-
 app = Flask(__name__)
-predictor = Predictor(psqlite)
+predictor = Predictor('flask_cvae/predictions.sqlite')
 
 @app.route('/predict', methods=['GET'])
 def predict():
