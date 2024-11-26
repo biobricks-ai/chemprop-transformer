@@ -13,11 +13,11 @@ class Trainer():
     
     def __init__(self, model):
         self.model = model.to(DEVICE)
-        self.optimizer = optim.AdamW(model.parameters(),lr=1e-3,betas = (0.9, 0.98), eps=1e-9)
+        self.optimizer = optim.AdamW(model.parameters(),lr=1e-4,betas = (0.9, 0.98), eps=1e-9)
         self.lossfn = mt.MultitaskTransformer.lossfn(ignore_index=tokenizer.pad_idx)
      
         # self.scheduler = mt.NoamLR(self.optimizer, model_size=model.module.hdim, warmup_steps=4000)
-        self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='min', factor=0.5, patience=5, verbose=True, min_lr=1e-7)
+        self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='min', factor=0.5, patience=5, verbose=True, min_lr=1e-6)
         self.scheduler_loss = []
         self.scheduler_loss_interval = 100
         
@@ -174,7 +174,6 @@ trainer = Trainer(model)\
     .set_model_savepath("data/finetune/model2")
 
 # focal_loss lr 1e-5 eval_loss: 0.0069       eval_acc: 0.8612
-
 # crossentropy lr 1e-3  eval_loss: .7380 eval_acc: 0.8621
 trainer.start()
 

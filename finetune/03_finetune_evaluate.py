@@ -1,4 +1,4 @@
-import itertools, uuid, shutil
+import itertools, uuid, shutil, pathlib
 import pandas as pd, tqdm, sklearn.metrics, torch, numpy as np, os
 import cvae.tokenizer, cvae.models.multitask_transformer as mt, cvae.utils, cvae.models.mixture_experts as me
 
@@ -104,9 +104,10 @@ sum(out_df['value'] == out_df['prob_vals']) / len(out_df)
 # GENERATE STRATIFIED EVALUATIONS FOR POSITION 0-9 ===============================
 assay_metrics = []
 grouped = out_df.groupby(['nprops','assay'])
+val0tok = min(torch.tensor(list(tokenizer.value_indexes().values()), device=DEVICE))
 for (position,assay), group in tqdm.tqdm(grouped):
     y_true, y_pred = group['value'].values, group['probs'].values
-    y_true = np.array([0 if x == 6170 else 1 for x in y_true])
+    y_true = np.array([0 if x == val0tok else 1 for x in y_true])
     nchem = len(group['chemical_id'].unique())
     if sum(y_true==0) < 10 or sum(y_true==1) < 10 or nchem < 20 : continue
     assay_metrics.append({
@@ -121,6 +122,7 @@ for (position,assay), group in tqdm.tqdm(grouped):
 
 metrics_df = pd.DataFrame(assay_metrics)
 metrics_df.sort_values(by=['AUC'], inplace=True, ascending=False)
+metrics_df
 metrics_df.to_csv("data/finetune/metrics/multitask_metrics.csv", index=False)
 
 # BUILD FIGURES ======================================================================
@@ -158,6 +160,8 @@ def auc_histogram(df,nprops):
     plt.subplots_adjust(top=0.9)  # Adjust this value as needed to make room for the title
     g.figure.tight_layout(rect=[0, 0.03, 1, 0.9])  # Adjust the rect to ensure title is visible
     g.add_legend()
+    outdir = pathlib.Path('notebook/plots/finetune')
+    outdir.mkdir(parents=True, exist_ok=True)
     plt.savefig('notebook/plots/finetune/multitask_transformer_metrics.png', facecolor='none', transparent=True)
 
 auc_histogram(df[(df['NUM_POS'] > 20) & (df['NUM_NEG'] >= 20)], nprops=1)
