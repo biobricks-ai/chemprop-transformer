@@ -28,7 +28,7 @@ def predict():
         return jsonify({'error': 'inchi and property token parameters are required'})
     
     with predict_lock:
-        mean_value = float(predictor.cached_predict_property(inchi, int(property_token)))
+        mean_value = float(predictor.predict_property(inchi, int(property_token)))
 
     return jsonify({"inchi": inchi, "property_token": property_token, "positive_prediction": mean_value})
 
