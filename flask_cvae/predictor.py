@@ -21,24 +21,10 @@ class Prediction:
         self.inchi = inchi
         self.value = value
         self.property_token = property_token
-    
-    @staticmethod
-    def save(inchi, property_token, value, psqlite):
-        cmd = "INSERT INTO prediction (inchi, property_token, value) VALUES (?, ?, ?)"
-        psqlite.execute(cmd, (inchi, property_token, value))
-        psqlite.commit()
-    
-    @staticmethod
-    def get(inchi, property_token, psqlite):
-        cmd = "SELECT value FROM prediction WHERE inchi = ? AND property_token = ?"
-        res = psqlite.execute(cmd, (inchi, property_token)).fetchone()
-        if res:
-            return Prediction(inchi, property_token, res[0])
-        return None
 
 class Predictor:
     
-    def __init__(self, psqlite):
+    def __init__(self):
         self.dburl = 'brick/cvae.sqlite'
         self.model = moe.MoE.load("brick/moe").to(DEVICE)
         self.tokenizer = self.model.tokenizer
@@ -46,37 +32,9 @@ class Predictor:
         
         conn = sqlite3.connect(self.dburl)
         conn.row_factory = sqlite3.Row 
-        self.all_props = self._get_all_properties()
         self.all_property_tokens = [r['property_token'] for r in conn.execute("SELECT DISTINCT property_token FROM property")]
         conn.close()
-        self.psqlite = psqlite
-        self.init_prediction_db()
-    
-    def init_prediction_db(self):
-        conn = sqlite3.connect(self.psqlite)
-        conn.execute("CREATE TABLE IF NOT EXISTS prediction (inchi TEXT, property_token INTEGER, value float)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_inchi_property_token ON prediction (inchi, property_token)")
-        conn.close()
-    
-    def _get_all_properties(self):
-        conn = sqlite3.connect(self.dburl)
-        conn.row_factory = sqlite3.Row  # This enables column access by name
-        cursor = conn.cursor()
-
-        query = """
-        SELECT source, prop.property_token, prop.data, cat.category, prop_cat.reason, prop_cat.strength
-        FROM property prop
-        INNER JOIN source src ON prop.source_id = src.source_id 
-        INNER JOIN property_category prop_cat ON prop.property_id = prop_cat.property_id
-        INNER JOIN category cat ON prop_cat.category_id = cat.category_id
-        """
-        
-        cursor.execute(query)
-        res = [dict(row) for row in cursor.fetchall()]
-
-        conn.close()
-        return pd.DataFrame(res)
-        
+         
     def _get_known_properties(self, inchi, category=None):
         conn = sqlite3.connect(self.dburl)
         conn.row_factory = sqlite3.Row  # This enables column access by name
@@ -154,14 +112,3 @@ class Predictor:
             return np.nan
         
         return np.mean(predictions[:, one_index], axis=0)
-    
-    def cached_predict_property(self, inchi, property_token):
-        conn = sqlite3.connect(self.psqlite)
-        prediction = Prediction.get(inchi, property_token, conn)
-        if prediction is not None: 
-            return prediction.value
-        
-        prediction = float(self.predict_property(inchi, property_token))
-        Prediction.save(inchi, property_token, prediction, conn)
-        conn.close()
-        return prediction

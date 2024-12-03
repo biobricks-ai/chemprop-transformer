@@ -16,3 +16,5 @@ position_metrics1.csv
 scratch.py
 notes.md
 *.log
+*.pem
+.aws/secrets/*
