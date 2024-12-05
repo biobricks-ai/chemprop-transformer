@@ -86,3 +86,36 @@ stages:
       hash: md5
       md5: b1fdb04a4e23188c1eb457ee3fb80b16
       size: 11035492352
+  evaluate_benchmarks:
+    cmd: python code/7.1_2_property_benchmarks_parallel.py
+    deps:
+    - path: brick/moe
+      hash: md5
+      md5: 367be0bb42100eca4255aba27159f9f6.dir
+      size: 117354730
+      nfiles: 3
+    - path: code/7.1_2_property_benchmarks_parallel.py
+      hash: md5
+      md5: e3e0e21597896fbf35cbdd2445f7e633
+      size: 12163
+    - path: data/tensordataset/multitask_tensors/hld
+      hash: md5
+      md5: 299a47b615d2a01857490d32d22c23ae.dir
+      size: 2466822610
+      nfiles: 67
+    outs:
+    - path: data/metrics/multitask_metrics.parquet
+      hash: md5
+      md5: 6ca6e147cc414ef511d862efd8723e8d.dir
+      size: 2599935
+      nfiles: 1602
+    - path: data/metrics/multitask_predictions.parquet
+      hash: md5
+      md5: b29b7e777b488438d967d91bf603a192.dir
+      size: 7613639993
+      nfiles: 196
+    - path: data/metrics/temp
+      hash: md5
+      md5: f8c0b442956f96aa5403b973785e9ed1.dir
+      size: 9540016480
+      nfiles: 876
