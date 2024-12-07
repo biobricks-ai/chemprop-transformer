@@ -1,23 +1,35 @@
 from flask import Flask, request, jsonify
+from werkzeug.serving import WSGIRequestHandler
 import sqlite3
 import threading
 import logging
 
 import sys
 sys.path.append('./flask_cvae')
-from flask_cvae.predictor import Predictor
+from flask_cvae.predictor import Predictor, Prediction
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, 
                     format='%(asctime)s %(levelname)s:%(message)s',
                     handlers=[logging.StreamHandler()])
 
-predict_lock = threading.Lock()
-cvaesql = sqlite3.connect('brick/cvae.sqlite', check_same_thread=False)  # Ensure thread-safety
-cvaesql.row_factory = sqlite3.Row  # This enables column access by name
+
+WSGIRequestHandler.protocol_version = "HTTP/1.1"
 
 app = Flask(__name__)
+app.config['TIMEOUT'] = 300  # 5 minutes in seconds
+
+predict_lock = threading.Lock()
 predictor = Predictor()
+
+@app.route('/predict_all', methods=['GET'])
+def predict_all():
+    logging.info(f"Predicting all properties for inchi: {request.args.get('inchi')}")
+    inchi = request.args.get('inchi')
+    with predict_lock:
+        property_predictions : list[Prediction] = predictor.predict_all_properties(inchi)
+
+    return jsonify(property_predictions)
 
 @app.route('/predict', methods=['GET'])
 def predict():

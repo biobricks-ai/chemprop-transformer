@@ -7,20 +7,23 @@ import torch.nn
 import sqlite3
 import itertools
 import logging
+from torch.utils.data import DataLoader, TensorDataset
+from dataclasses import dataclass
+from tqdm import tqdm
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, 
                     format='%(asctime)s %(levelname)s:%(message)s',
                     handlers=[logging.StreamHandler()])
 
+torch.cuda.set_per_process_memory_fraction(0.25, device=0)
 DEVICE = torch.device(f'cuda:0')
 
+@dataclass
 class Prediction:
-    
-    def __init__(self, inchi, property_token, value):
-        self.inchi = inchi
-        self.value = value
-        self.property_token = property_token
+    inchi: str
+    property_token: int 
+    value: float
 
 class Predictor:
     
@@ -102,13 +105,88 @@ class Predictor:
         result_logit = self.model(input, rand_tensors)[:, -1, value_indexes]
         return torch.softmax(result_logit, dim=1).detach().cpu().numpy()
     
-    def predict_property(self, inchi, property_token, seed=137):
+    def predict_property(self, inchi, property_token, seed=137, num_rand_tensors=1000):
         value_indexes = list(self.tokenizer.value_indexes().values())
         one_index = value_indexes.index(self.tokenizer.value_id_to_token_idx(1))
-        predictions = self.predict_property_with_randomized_tensors(inchi, property_token, seed)
+        predictions = self.predict_property_with_randomized_tensors(inchi, property_token, seed, num_rand_tensors=num_rand_tensors)
         
         if predictions.size == 0:
             logging.info(f"No predictions generated for InChI: {inchi} and property token: {property_token}")
             return np.nan
         
         return np.mean(predictions[:, one_index], axis=0)
+    
+    def _build_random_tensors(self, inchi, seed, num_rand_tensors):
+        np.random.seed(seed)
+        torch.manual_seed(seed)
+        
+        smiles = H.inchi_to_smiles_safe(inchi)
+        selfies = H.smiles_to_selfies_safe(smiles)
+        input = torch.LongTensor(self.tokenizer.selfies_tokenizer.selfies_to_indices(selfies))
+        input = input.view(1, -1)
+        
+        known_props = self._get_known_properties(inchi)
+        teach_force = torch.LongTensor([1, self.tokenizer.SEP_IDX]).view(1, -1)
+        
+        if known_props.empty:
+            return input, teach_force
+
+        property_value_pairs = list(zip(known_props['property_token'], known_props['value_token']))        
+        av_flat = torch.LongTensor(list(itertools.chain.from_iterable(property_value_pairs)))
+        av_reshaped = av_flat.reshape(av_flat.size(0) // 2, 2)
+        
+        rand_tensors = []
+        for _ in range(num_rand_tensors):
+            av_shuffled = av_reshaped[torch.randperm(av_reshaped.size(0)), :].reshape(av_flat.size(0))
+            av_truncate = av_shuffled[0:8]
+            av_sos_trunc = torch.cat([torch.LongTensor([1, self.tokenizer.SEP_IDX]), av_truncate])
+            rand_tensors.append(av_sos_trunc)
+        
+        rand_tensors = torch.stack(rand_tensors)
+        print(f"Stacked Random Tensors size: {rand_tensors.size()}")
+        
+        return input, rand_tensors
+    
+    # test with inchi=InChI=1S/C6H6/c1-2-4-6-5-3-1/h1-6H
+    def predict_all_properties(self, inchi, seed=137, max_num_rand_tensors=100) -> list[Prediction]:
+        input, rand_tensors_raw = self._build_random_tensors(inchi, seed, max_num_rand_tensors)
+        
+        # Remove duplicate rows from rand_tensors
+        rand_tensors = torch.unique(rand_tensors_raw, dim=0)
+        num_rand_tensors = rand_tensors.size(0)
+
+        value_indexes = list(self.tokenizer.value_indexes().values())
+        one_index = value_indexes.index(self.tokenizer.value_id_to_token_idx(1))
+        
+        # Pre-build tensors for all property tokens
+        all_property_tokens_tensor = torch.LongTensor(self.all_property_tokens)
+        repeated_property_tokens = all_property_tokens_tensor.repeat_interleave(num_rand_tensors).unsqueeze(1)
+        
+        # Repeat rand_tensors for all properties
+        repeated_rand_tensors = rand_tensors.repeat(len(self.all_property_tokens), 1)
+        
+        # Concatenate rand_tensors with property tokens
+        all_prop_tensors = torch.cat([repeated_rand_tensors, repeated_property_tokens], dim=1)
+
+        # Create a TensorDataset and DataLoader for efficient batching
+        simultaneous_properties = 150
+        batch_size = simultaneous_properties * num_rand_tensors
+        dataset = TensorDataset(all_prop_tensors)
+        dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
+        
+        raw_preds = []
+        # batch = next(iter(dataloader))
+        for batch in tqdm(dataloader):
+            prop_tensors_batch = batch[0].to(DEVICE)
+            batch_input = input.repeat(prop_tensors_batch.size(0), 1).to(DEVICE)
+            # Model inference
+            with torch.no_grad():  # Disable gradients for inference
+                result_logit = self.model(batch_input, prop_tensors_batch)[:, -1, value_indexes]
+                batch_preds = torch.softmax(result_logit, dim=1)[:, one_index]
+                # Calculate mean predictions
+                batch_preds_mean = batch_preds.view(-1, num_rand_tensors).mean(dim=1)
+                raw_preds.extend(batch_preds_mean.detach().cpu().numpy())
+            
+        raw_preds = [float(x) for x in raw_preds]
+        preds = [Prediction(inchi=inchi, property_token=self.all_property_tokens[i], value=raw_preds[i]) for i in range(len(raw_preds))]
+        return preds
