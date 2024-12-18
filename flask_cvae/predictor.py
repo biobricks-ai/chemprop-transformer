@@ -1,3 +1,5 @@
+import json
+import threading
 import pandas as pd
 import numpy as np
 import cvae.models.mixture_experts as moe
@@ -10,25 +12,42 @@ import logging
 from torch.utils.data import DataLoader, TensorDataset
 from dataclasses import dataclass
 from tqdm import tqdm
+from dataclasses import dataclass, asdict
+from typing import List
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, 
                     format='%(asctime)s %(levelname)s:%(message)s',
                     handlers=[logging.StreamHandler()])
 
-torch.cuda.set_per_process_memory_fraction(0.25, device=0)
 DEVICE = torch.device(f'cuda:0')
+
+@dataclass
+class Category:
+    category: str
+    reason: str
+    strength: str
+
+@dataclass
+class Property:
+    property_token: int
+    source: str
+    title: str
+    metadata: dict
+    categories: list[Category]
 
 @dataclass
 class Prediction:
     inchi: str
-    property_token: int 
+    property_token: int
+    property: Property
     value: float
 
 class Predictor:
     
     def __init__(self):
         self.dburl = 'brick/cvae.sqlite'
+        self.dblock = threading.Lock()
         self.model = moe.MoE.load("brick/moe").to(DEVICE)
         self.tokenizer = self.model.tokenizer
         self.model = torch.nn.DataParallel(self.model)  
@@ -36,8 +55,40 @@ class Predictor:
         conn = sqlite3.connect(self.dburl)
         conn.row_factory = sqlite3.Row 
         self.all_property_tokens = [r['property_token'] for r in conn.execute("SELECT DISTINCT property_token FROM property")]
+        self.property_map = self.build_property_map()
         conn.close()
-         
+    
+    def build_property_map(self):
+        with self.dblock:
+            conn = sqlite3.connect(self.dburl)
+            conn.row_factory = lambda cursor, row: dict((cursor.description[i][0], value) for i, value in enumerate(row))
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT p.property_token, p.title, p.data as metadata, s.source, c.category, pc.reason, pc.strength
+                FROM property p
+                INNER JOIN property_category pc ON p.property_id = pc.property_id 
+                INNER JOIN category c ON pc.category_id = c.category_id
+                INNER JOIN source s ON p.source_id = s.source_id
+            """)
+            res = cursor.fetchall()
+            
+            # Group results by property_token
+            property_map = {}
+            for property_token, group in itertools.groupby(res, key=lambda x: x['property_token']):
+                group_list = list(group)
+                categories = [Category(category=r['category'], reason=r['reason'], strength=r['strength']) 
+                            for r in group_list]
+                
+                property = Property(property_token=property_token,
+                                  title=group_list[0]['title'],
+                                  metadata=json.loads(group_list[0]['metadata']),
+                                  source=group_list[0]['source'],
+                                  categories=categories)
+                                  
+                property_map[property_token] = property
+                
+            return property_map
+    
     def _get_known_properties(self, inchi, category=None):
         conn = sqlite3.connect(self.dburl)
         conn.row_factory = sqlite3.Row  # This enables column access by name
@@ -114,7 +165,10 @@ class Predictor:
             logging.info(f"No predictions generated for InChI: {inchi} and property token: {property_token}")
             return np.nan
         
-        return np.mean(predictions[:, one_index], axis=0)
+        token_property = self.property_map.get(property_token, None)
+        meanpred = float(np.mean(predictions[:, one_index], axis=0))
+        prediction = Prediction(inchi=inchi, property_token=property_token, property=token_property, value=meanpred)
+        return prediction
     
     def _build_random_tensors(self, inchi, seed, num_rand_tensors):
         np.random.seed(seed)
@@ -169,7 +223,7 @@ class Predictor:
         all_prop_tensors = torch.cat([repeated_rand_tensors, repeated_property_tokens], dim=1)
 
         # Create a TensorDataset and DataLoader for efficient batching
-        simultaneous_properties = 150
+        simultaneous_properties = 100
         batch_size = simultaneous_properties * num_rand_tensors
         dataset = TensorDataset(all_prop_tensors)
         dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
@@ -188,5 +242,7 @@ class Predictor:
                 raw_preds.extend(batch_preds_mean.detach().cpu().numpy())
             
         raw_preds = [float(x) for x in raw_preds]
-        preds = [Prediction(inchi=inchi, property_token=self.all_property_tokens[i], value=raw_preds[i]) for i in range(len(raw_preds))]
+        property_tokens = [self.all_property_tokens[i] for i in range(len(raw_preds))]
+        properties = [self.property_map.get(property_token, None) for property_token in property_tokens]
+        preds = [Prediction(inchi=inchi, property_token=property_tokens[i], property=properties[i], value=raw_preds[i]) for i in range(len(raw_preds))]
         return preds

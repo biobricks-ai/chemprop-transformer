@@ -1,6 +1,6 @@
 # docker build -t biobricks-ai/cvae .
 # docker run -p 6515:6515 -v .:/chemsim --rm --gpus all -it --name chemsim biobricks-ai/cvae
-# docker run -p 6515:6515 --rm --gpus all -it --name chemsim biobricks-ai/cvae bash
+# docker run -p 6515:6515 --rm --gpus all -it --name chemsim 010438487580.dkr.ecr.us-east-1.amazonaws.com/biobricks/chemprop-transformer
 # curl "http://localhost:6515/predict?property_token=5042&inchi=InChI=1S/C9H8O4/c1-6(10)13-8-5-3-2-4-7(8)9(11)12/h2-5H,1H3,(H,11,12)"
 FROM nvidia/cuda:12.3.1-base-ubuntu20.04
 
@@ -56,5 +56,6 @@ COPY cvae app/cvae
 
 # Start the container with a bash shell
 WORKDIR /app
-CMD ["gunicorn", "-b", "0.0.0.0:6515", "--timeout", "480", "--graceful-timeout", "480", "--workers", "1", "flask_cvae.app:app"]
+CMD ["gunicorn", "-b", "0.0.0.0:6515", "--timeout", "480", "--graceful-timeout", "480", \
+    "--workers", "1", "--keep-alive", "300", "flask_cvae.app:app"]
 # gunicorn -b 0.0.0.0:6515 --timeout 480 --graceful-timeout 480 --workers 1 flask_cvae.app:app

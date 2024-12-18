@@ -3,6 +3,7 @@ from werkzeug.serving import WSGIRequestHandler
 import sqlite3
 import threading
 import logging
+import dataclasses
 
 import sys
 sys.path.append('./flask_cvae')
@@ -28,8 +29,9 @@ def predict_all():
     inchi = request.args.get('inchi')
     with predict_lock:
         property_predictions : list[Prediction] = predictor.predict_all_properties(inchi)
-
-    return jsonify(property_predictions)
+    
+    json_predictions = [dataclasses.asdict(p) for p in property_predictions]
+    return jsonify(json_predictions)
 
 @app.route('/predict', methods=['GET'])
 def predict():
@@ -40,9 +42,9 @@ def predict():
         return jsonify({'error': 'inchi and property token parameters are required'})
     
     with predict_lock:
-        mean_value = float(predictor.predict_property(inchi, int(property_token)))
+        prediction : Prediction = predictor.predict_property(inchi, int(property_token))
 
-    return jsonify({"inchi": inchi, "property_token": property_token, "positive_prediction": mean_value})
+    return jsonify(dataclasses.asdict(prediction))
 
 @app.route('/health', methods=['GET'])
 def health_check():
