@@ -165,20 +165,26 @@ print(f"{trainable_params/1e9} billion parameters")
 # model = mt.MultitaskTransformer.load("brick/mtransform2").to(DEVICE)
 # model = torch.nn.DataParallel(model)
 
-trnds = mt.SequenceShiftDataset("data/tensordataset/multitask_tensors/trn", tokenizer, nprops=5)
+trnds = mt.SequenceShiftDataset("cache/build_tensordataset/multitask_tensors/trn", tokenizer, nprops=5)
 trndl = torch.utils.data.DataLoader(trnds, batch_size=32*8, shuffle=True, prefetch_factor=20000, num_workers=60)
-valds = mt.SequenceShiftDataset("data/tensordataset/multitask_tensors/tst", tokenizer, nprops=5)
+valds = mt.SequenceShiftDataset("cache/build_tensordataset/multitask_tensors/tst", tokenizer, nprops=5)
 valdl = torch.utils.data.DataLoader(valds, batch_size=32*8, shuffle=True, prefetch_factor=20000, num_workers=60)
 
 input, teach_forcing, out = next(iter(valdl))
 input, teach_forcing, out = input.to(DEVICE), teach_forcing.to(DEVICE), out.to(DEVICE)
 model(input, teach_forcing).shape
 
+outdir = pathlib.Path("cache/train_multitask_transformer")
+outdir.mkdir(exist_ok=True)
+
+metrics_dir = outdir / "metrics"
+metrics_dir.mkdir(exist_ok=True)
+
 trainer = Trainer(model)\
     .set_trn_iterator(itertools.cycle(enumerate(trndl)))\
     .set_validation_dataloader(valdl)\
     .set_mask_percent(0.1)\
-    .set_metrics_file(pathlib.Path("metrics/multitask_loss.tsv"), overwrite=True)\
-    .set_model_savepath("brick/moe")
+    .set_metrics_file(metrics_dir / "multitask_loss.tsv", overwrite=True)\
+    .set_model_savepath(outdir / "moe")
 
 trainer.start()

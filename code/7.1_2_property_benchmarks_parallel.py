@@ -274,6 +274,8 @@ for pickle_file in tqdm(pickles):
 
 
 evaldf.to_parquet(outdir / "evaluation.parquet")
+
+evaldf = pd.read_parquet(outdir / "evaluation.parquet")
 safe_roc = lambda x, y: roc_auc_score(x, y) if len(set(x)) > 1 else None
 aucs = evaldf.groupby('property_token').apply(lambda x: safe_roc(x['value'], x['pred'])).reset_index()
 aucs.columns = ['property_token', 'auc']

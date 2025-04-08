@@ -1,6 +1,4 @@
 import sys, os
-sys.path.append(os.path.abspath('./'))
-
 import numpy as np
 import itertools
 import pathlib
@@ -131,22 +129,25 @@ def main(rank, world_size):
     num_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     
     
-    trnds = mt.SequenceShiftDataset("data/tensordataset/multitask_tensors/trn", tokenizer, nprops=20)
+    trnds = mt.SequenceShiftDataset("cache/build_tensordataset/multitask_tensors/trn", tokenizer, nprops=20)
     trndl = torch.utils.data.DataLoader(
         trnds, batch_size=16*8, shuffle=False, num_workers=4, pin_memory=True,
         sampler=torch.utils.data.distributed.DistributedSampler(trnds, num_replicas=world_size, rank=rank)
     )
     
-    valds = mt.SequenceShiftDataset("data/tensordataset/multitask_tensors/tst", tokenizer, nprops=20)
+    valds = mt.SequenceShiftDataset("cache/build_tensordataset/multitask_tensors/tst", tokenizer, nprops=20)
     valdl = torch.utils.data.DataLoader(valds, batch_size=16*8, shuffle=False, num_workers=0, pin_memory=True,
         sampler=torch.utils.data.distributed.DistributedSampler(valds, num_replicas=world_size, rank=rank))
+    
+    outdir = pathlib.Path("cache/train_multitask_transformer")
+    outdir.mkdir(exist_ok=True)
     
     trainer = Trainer(model, rank, tokenizer, max_epochs=10)\
         .set_trn_iterator(trndl)\
         .set_validation_dataloader(valdl)\
         .set_mask_percent(0.1)\
-        .set_model_savepath('brick/moe')\
-        .set_metrics_file(pathlib.Path("metrics/multitask_loss.tsv"), overwrite=True)
+        .set_model_savepath('cache/train_multitask_transformer/moe')\
+        .set_metrics_file(pathlib.Path("cache/train_multitask_transformer/metrics/multitask_loss.tsv"), overwrite=True)
     
     if rank ==0:
         print(f"{len(trndl)} train batches")

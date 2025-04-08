@@ -19,11 +19,11 @@ def build_propdf():
         .merge(proptitle, on='property_token', how='inner')
 
     # remove poor performing properties
-    # evaldf = pd.read_csv('data/metrics/multitask_metrics.csv')\
-    #     .rename(columns={'assay':'property_token'})\
-    #     .groupby('property_token').aggregate({'AUC':'median'})\
-    #     .query('AUC > .7')\
-    #     .reset_index()
+    evaldf = pd.read_parquet('data/metrics/multitask_metrics.parquet')\
+        .rename(columns={'assay':'property_token'})\
+        .groupby('property_token').aggregate({'AUC':'median'})\
+        .query('AUC > .7')\
+        .reset_index()
 
     # remove irrelevant categories
     # return propdf.merge(evaldf, on='property_token', how='inner')\

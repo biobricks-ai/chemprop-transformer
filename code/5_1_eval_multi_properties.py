@@ -156,4 +156,4 @@ metrics_df = large_properties_df.repartition(800) \
     .withColumn('metrics', calculate_metrics_udf(F.col('y_true'), F.col('y_pred'))) \
     .select('nprops', 'assay', col('metrics.AUC').alias('AUC'), col('metrics.ACC').alias('ACC'), col('metrics.BAC').alias('BAC'), col('metrics.cross_entropy_loss').alias('cross_entropy_loss'), 'NUM_POS', 'NUM_NEG')
 
-metrics_df.write.parquet("data/metrics/multitask_metrics.parquet", mode="overwrite")
+metrics_df.write.parquet("cache/eval_multi_properties/multitask_metrics.parquet", mode="overwrite")

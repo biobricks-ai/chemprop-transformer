@@ -1,17 +1,25 @@
 stages:
   
   preprocess:
-    cmd: python code/1_preprocess.py
+    cmd: PYTHONPATH=./ python code/1_preprocess.py
     deps:
     - code/1_preprocess.py
     outs:
-    - data/processed/
+    - cache/preprocess/
+
+  preprocess_tokenizer:
+    cmd: PYTHONPATH=./ python code/1_2_preprocess_tokenizer.py
+    deps:
+    - code/1_2_preprocess_tokenizer.py
+    - cache/preprocess/
+    outs:
+    - cache/preprocess_tokenizer/
 
   build_tensordataset:
     cmd: python code/2_build_tensordataset.py
     deps:
     - code/2_build_tensordataset.py
-    - data/processed/
+    - cache/preprocess/
     outs:
     - data/tensordataset/
     - brick/selfies_property_val_tokenizer/
@@ -20,7 +28,7 @@ stages:
     cmd: python code/3_train_multitask_transformer.py
     deps:
     - code/3_train_multitask_transformer.py
-    - data/processed/
+    - cache/preprocess/
     - data/tensordataset/
     - brick/selfies_property_val_tokenizer/
     outs:
@@ -42,7 +50,7 @@ stages:
     deps:
       - code/6_build_sqlite.py
       - brick/selfies_property_val_tokenizer
-      - data/processed/activities.parquet
+      - cache/preprocess/activities.parquet
     outs:
       - brick/cvae.sqlite
   

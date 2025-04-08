@@ -6,6 +6,7 @@ import pyspark.ml.feature
 import pyspark.sql.functions as F
 import pathlib
 import cvae.utils
+
 # set up logging
 logdir = pathlib.Path('log')
 logdir.mkdir(parents=True, exist_ok=True)
@@ -48,8 +49,7 @@ data = indexer.fit(data).transform(data)
 
 ## write out the processed data, delete activities.parquet if it exists
 logging.info("Writing processed data to parquet...")
-cvae.utils.mk_empty_directory('data/processed/activities.parquet', overwrite=True)
-data.write.parquet('data/processed/activities.parquet', mode='overwrite')
+data.write.parquet((outdir / 'activities.parquet').as_posix(), mode='overwrite')
 logging.info(f"wrote {outdir / 'activities.parquet'}")
 
 spark.stop()
