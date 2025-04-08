@@ -5,6 +5,23 @@ import yaml
 from tqdm import tqdm
 import pathlib, shutil
 import threading
+import pyspark
+
+def setup_logging(log_file, logmodule):
+    logmodule.basicConfig(
+        filename=log_file,
+        level=logmodule.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+
+def get_spark_session():
+    return pyspark.sql.SparkSession.builder \
+        .appName("ChemharmonyDataProcessing") \
+        .config("spark.driver.memory", "64g") \
+        .config("spark.driver.maxResultSize", "48g") \
+        .config("spark.executor.memory", "64g") \
+        .getOrCreate()
 
 def write_path(path, text, mode='a'):
     with open(path, mode) as f:
