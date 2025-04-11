@@ -1,4 +1,4 @@
-import itertools, uuid
+import itertools, uuid, pathlib
 import pandas as pd, tqdm, sklearn.metrics, torch, numpy as np, os
 import cvae.tokenizer, cvae.models.multitask_transformer as mt, cvae.utils, cvae.models.mixture_experts as me
 from cvae.tokenizer import SelfiesPropertyValTokenizer
@@ -7,23 +7,24 @@ from pyspark.sql import functions as F
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import split, col, when
 
+# Create all necessary directories
+outdir = pathlib.Path("cache/eval_multi_properties")
+outdir.mkdir(exist_ok=True, parents=True)
+
+temp_dir = outdir / "temp"
+temp_dir.mkdir(exist_ok=True)
+
+metrics_dir = outdir / "metrics"
+metrics_dir.mkdir(exist_ok=True)
+
 tqdm.tqdm.pandas()
 DEVICE = torch.device(f'cuda:0')
-outdir = cvae.utils.mk_empty_directory("data/metrics", overwrite=True)
+
 model : me.MoE = me.MoE.load("brick/moe").to(DEVICE)
 model = torch.nn.DataParallel(model)
 tokenizer : SelfiesPropertyValTokenizer = model.module.tokenizer
 
-spark = SparkSession.builder.appName("MultitaskPredictions") \
-    .config("spark.driver.memory", "64g") \
-    .config("spark.driver.maxResultSize", "16g") \
-    .config("spark.executor.memory", "64g") \
-    .config("spark.executor.instances", "4") \
-    .config('spark.locality.wait', '0s') \
-    .config('spark.local.dir', '/tmp/spark-temp') \
-    .config("spark.dynamicAllocation.enabled", "true") \
-    .config("spark.shuffle.service.enabled", "true") \
-    .getOrCreate()
+spark = cvae.utils.get_spark_session()
 
 
 # EVALUATION LOOP ===================================================================
@@ -91,10 +92,9 @@ def run_eval(i, raw_inp, raw_out, out_df, nprops):
     
     return pd.concat([out_df, batch_df]) if len(out_df) > 0 else batch_df
 
-os.makedirs("data/metrics/temp", exist_ok=True)
 batch_size = 16
 nprops = 5
-val = mt.SequenceShiftDataset("data/tensordataset/multitask_tensors/hld", tokenizer, nprops=nprops)
+val = mt.SequenceShiftDataset("cache/build_tensordataset/multitask_tensors/hld", tokenizer, nprops=nprops)
 valdl = torch.utils.data.DataLoader(val, batch_size=batch_size, shuffle=False)
 seen_inputs = set()
 
@@ -112,18 +112,19 @@ for iter in tqdm.tqdm(range(24)):
             out_df = pd.concat([out_df, current_df], ignore_index=True)
         
         if len(out_df) > 1000000:
-            out_df.to_parquet(f"data/metrics/temp/multitask_predictions_{str(uuid.uuid4())}.parquet", index=False)
+            out_df.to_parquet(temp_dir / f"multitask_predictions_{str(uuid.uuid4())}.parquet", index=False)
             out_df = pd.DataFrame({'chemical_id':[], 'prior_assays':[], 'prior_values':[], 'assay':[], 'value':[], 'probs':[], 'nprops':[], 'prob_assays':[], 'prob_vals':[]})
 
     if not out_df.empty:
-        out_df.to_parquet(f"data/metrics/temp/multitask_predictions_{str(uuid.uuid4())}.parquet", index=False)
+        path = temp_dir / f"multitask_predictions_{str(uuid.uuid4())}.parquet"
+        out_df.to_parquet(path, index=False)
 
-df0 = spark.read.parquet("data/metrics/temp/*.parquet")
+df0 = spark.read.parquet((temp_dir / "*.parquet").as_posix())
 df1 = df0.withColumn("prior_assays", split(col("prior_assays"), " \+ ")) 
-df1.write.parquet("data/metrics/multitask_predictions.parquet", mode="overwrite")
+df1.write.parquet((outdir / "multitask_predictions.parquet").as_posix(), mode="overwrite")
 
 # GENERATE STRATIFIED EVALUATIONS FOR POSITION 0-5 ===============================
-outdf = spark.read.parquet("data/metrics/multitask_predictions.parquet")
+outdf = spark.read.parquet((outdir / "multitask_predictions.parquet").as_posix())
 
 # Calculate metrics
 value_indexes = torch.tensor(list(tokenizer.value_indexes().values()), device=DEVICE)
@@ -156,4 +157,4 @@ metrics_df = large_properties_df.repartition(800) \
     .withColumn('metrics', calculate_metrics_udf(F.col('y_true'), F.col('y_pred'))) \
     .select('nprops', 'assay', col('metrics.AUC').alias('AUC'), col('metrics.ACC').alias('ACC'), col('metrics.BAC').alias('BAC'), col('metrics.cross_entropy_loss').alias('cross_entropy_loss'), 'NUM_POS', 'NUM_NEG')
 
-metrics_df.write.parquet("cache/eval_multi_properties/multitask_metrics.parquet", mode="overwrite")
+metrics_df.write.parquet((outdir / "multitask_metrics.parquet").as_posix(), mode="overwrite")

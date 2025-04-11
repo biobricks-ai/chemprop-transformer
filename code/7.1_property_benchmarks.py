@@ -1,5 +1,4 @@
-import pandas as pd, sqlite3, seaborn as sns, matplotlib.pyplot as plt, os, pathlib, numpy as np, sys
-sys.path.append('./')
+import pandas as pd, sqlite3, seaborn as sns, matplotlib.pyplot as plt, os, pathlib, numpy as np
 import cvae.tokenizer, cvae.models.multitask_transformer as mt, cvae.utils, cvae.models.mixture_experts as me
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from cvae.tokenizer import SelfiesPropertyValTokenizer
@@ -10,7 +9,7 @@ from joblib import Parallel, delayed
 from tqdm.auto import tqdm
 tqdm.pandas()
 
-outdir = pathlib.Path("data/property_benchmarks")
+outdir = pathlib.Path("cache/property_benchmarks")
 outdir.mkdir(parents=True, exist_ok=True)
 
 DEVICE = torch.device(f'cuda:0')
@@ -27,7 +26,7 @@ prop_src = prop_src.groupby('property_token').first().reset_index()
 
 # Converts 2_build_tensordataset.py .pt files into df 
 # @return dataframe with columns -> [ selfies_str, selfies : tensor, assay : int, value : int ]
-def tensors_to_df(tensor_dir = pathlib.Path("data/tensordataset/multitask_tensors/hld")):
+def tensors_to_df(tensor_dir = pathlib.Path("cache/build_tensordataset/multitask_tensors/hld")):
     tensors = [torch.load(file) for file in tqdm(list(tensor_dir.iterdir()))]
     df = pd.DataFrame([
         {'selfies': selfie.tolist(), 'assay_vals': assay_val.tolist()}
@@ -58,11 +57,11 @@ def tensors_to_df(tensor_dir = pathlib.Path("data/tensordataset/multitask_tensor
 
     return exploded_df
 
-trn_df = tensors_to_df(pathlib.Path("data/tensordataset/multitask_tensors/trn"))
-hld_df = tensors_to_df(pathlib.Path("data/tensordataset/multitask_tensors/hld"))
+trn_df = tensors_to_df(pathlib.Path("cache/build_tensordataset/multitask_tensors/trn"))
+hld_df = tensors_to_df(pathlib.Path("cache/build_tensordataset/multitask_tensors/hld"))
 
-trn_df.to_parquet(outdir / "trn_df.parquet")
-hld_df.to_parquet(outdir / "hld_df.parquet")
+trn_df.to_parquet((outdir / "trn_df.parquet").as_posix())
+hld_df.to_parquet((outdir / "hld_df.parquet").as_posix())
 
 # assert that there is no overlap in selfies_str between trn_df and hld_df
 assert not trn_df['selfies_str'].isin(hld_df['selfies_str']).any(), "There is overlap in selfies_str between trn_df and hld_df"

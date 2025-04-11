@@ -1,6 +1,5 @@
 import pickle, uuid
-import pandas as pd, sqlite3, seaborn as sns, matplotlib.pyplot as plt, os, pathlib, numpy as np, sys
-sys.path.append('./')
+import pandas as pd, sqlite3, seaborn as sns, matplotlib.pyplot as plt, os, pathlib, numpy as np
 import cvae.tokenizer, cvae.models.multitask_transformer as mt, cvae.utils, cvae.models.mixture_experts as me
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from cvae.tokenizer import SelfiesPropertyValTokenizer
@@ -10,50 +9,17 @@ from tqdm import tqdm
 from joblib import Parallel, delayed
 from tqdm.auto import tqdm
 import biobricks as bb
-tqdm.pandas()
+import logging
 
-pca = bb.assets('pubchem-annotations')
+tqdm.pandas()
 
 # Create Spark environment
 from pyspark.sql import SparkSession
 
 # Initialize Spark session
-spark = SparkSession.builder \
-    .appName("PropertyBenchmarks") \
-    .config("spark.driver.memory", "4g") \
-    .config("spark.executor.memory", "4g") \
-    .getOrCreate()
+spark = cvae.utils.get_spark_session()
 
-
-pca = spark.read.parquet(pca.annotations_parquet)
-# >>> pca.printSchema()
-# root
-#  |-- SourceName: string (nullable = true)
-#  |-- SourceID: string (nullable = true)
-#  |-- Name: string (nullable = true)
-#  |-- Description: string (nullable = true)
-#  |-- URL: string (nullable = true)
-#  |-- LicenseNote: string (nullable = true)
-#  |-- LicenseURL: string (nullable = true)
-#  |-- heading: string (nullable = true)
-#  |-- type: string (nullable = true)
-#  |-- DataName: string (nullable = true)
-#  |-- Data: string (nullable = true)
-#  |-- PubChemCID: array (nullable = true)
-#  |    |-- element: long (containsNull = true)
-#  |-- PubChemSID: array (nullable = true)
-#  |    |-- element: long (containsNull = true)
-# Convert pandas DataFrames to Spark DataFrames
-trn_spark = spark.createDataFrame(trn_df)
-hld_spark = spark.createDataFrame(hld_df)
-
-# Cache the Spark DataFrames for better performance
-trn_spark.cache()
-hld_spark.cache()
-
-print("Spark environment created and DataFrames converted.")
-
-outdir = pathlib.Path("data/property_benchmarks")
+outdir = pathlib.Path("cache/property_benchmarks_parallel")
 outdir.mkdir(parents=True, exist_ok=True)
 
 DEVICE = torch.device(f'cuda:0')
@@ -66,11 +32,13 @@ conn = sqlite3.connect('brick/cvae.sqlite')
 
 # get all the property_tokens for tox21 properties
 prop_src = pd.read_sql("SELECT property_token,title,source FROM property p INNER JOIN source s on p.source_id = s.source_id", conn)
-prop_src = prop_src.groupby('property_token').first().reset_index()
+
+# assert that each property_token has only one title
+assert prop_src.groupby('property_token').size().max() == 1
 
 # Converts 2_build_tensordataset.py .pt files into df 
 # @return dataframe with columns -> [ selfies_str, selfies : tensor, assay : int, value : int ]
-def tensors_to_df(tensor_dir = pathlib.Path("data/tensordataset/multitask_tensors/hld")):
+def tensors_to_df(tensor_dir = pathlib.Path("cache/build_tensordataset/multitask_tensors/hld")):
     tensors = [torch.load(file) for file in tqdm(list(tensor_dir.iterdir()))]
     df = pd.DataFrame([
         {'selfies': selfie.tolist(), 'assay_vals': assay_val.tolist()}
@@ -101,11 +69,11 @@ def tensors_to_df(tensor_dir = pathlib.Path("data/tensordataset/multitask_tensor
 
     return exploded_df
 
-trn_df = tensors_to_df(pathlib.Path("data/tensordataset/multitask_tensors/trn"))
-hld_df = tensors_to_df(pathlib.Path("data/tensordataset/multitask_tensors/hld"))
+trn_df = tensors_to_df(pathlib.Path("cache/build_tensordataset/multitask_tensors/trn"))
+hld_df = tensors_to_df(pathlib.Path("cache/build_tensordataset/multitask_tensors/hld"))
 
-trn_df.to_parquet(outdir / "trn_df.parquet")
-hld_df.to_parquet(outdir / "hld_df.parquet")
+trn_df.to_parquet((outdir / "trn_df.parquet").as_posix())
+hld_df.to_parquet((outdir / "hld_df.parquet").as_posix())
 
 # assert that there is no overlap in selfies_str between trn_df and hld_df
 assert not trn_df['selfies_str'].isin(hld_df['selfies_str']).any(), "There is overlap in selfies_str between trn_df and hld_df"
@@ -222,7 +190,7 @@ def build_property_token_tensors(property_token : int, hld_df : pd.DataFrame, tr
         print(f"Error for property_token {property_token}: {e}")
         return None
 
-tempdir = pathlib.Path("data/property_benchmarks/temp")
+tempdir = outdir / "temp"
 tempdir.mkdir(parents=True, exist_ok=True)
 
 def init_worker(trn_df, hld_df):
@@ -273,9 +241,11 @@ for pickle_file in tqdm(pickles):
     evaldf = pd.concat([evaldf, resdf])
 
 
-evaldf.to_parquet(outdir / "evaluation.parquet")
+path = (outdir / "evaluation.parquet").as_posix()
+evaldf.to_parquet(path)
 
-evaldf = pd.read_parquet(outdir / "evaluation.parquet")
+evaldf = pd.read_parquet(path)
+
 safe_roc = lambda x, y: roc_auc_score(x, y) if len(set(x)) > 1 else None
 aucs = evaldf.groupby('property_token').apply(lambda x: safe_roc(x['value'], x['pred'])).reset_index()
 aucs.columns = ['property_token', 'auc']
@@ -284,3 +254,6 @@ propeval = prop_src.merge(aucs, on='property_token', how='left')
 # get median auc by source
 med_aucs = propeval.groupby('source').apply(lambda x: x['auc'].median()).sort_values(ascending=False)
 print(med_aucs)
+
+# save median aucs by source
+med_aucs.to_parquet((outdir / "median_aucs.parquet").as_posix())

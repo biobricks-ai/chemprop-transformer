@@ -9,7 +9,7 @@ import cvae.models.mixture_experts as me
 from cvae.tokenizer import SelfiesPropertyValTokenizer
 
 # Setup paths
-outdir = pathlib.Path("data/property_benchmarks_nprops0")
+outdir = pathlib.Path("cache/nprops0")
 outdir.mkdir(parents=True, exist_ok=True)
 
 DEVICE = torch.device(f'cuda:0')
@@ -17,7 +17,7 @@ model: me.MoE = me.MoE.load("brick/moe").to(DEVICE)
 model = torch.nn.DataParallel(model)
 tokenizer: SelfiesPropertyValTokenizer = model.module.tokenizer
 
-hld_df = pd.read_parquet("data/property_benchmarks/hld_df.parquet")
+hld_df = pd.read_parquet("cache/property_benchmarks/hld_df.parquet")
 # Load property metadata
 conn = sqlite3.connect('brick/cvae.sqlite')
 prop_src = pd.read_sql("SELECT property_token, title, source FROM property p INNER JOIN source s on p.source_id = s.source_id", conn)
@@ -81,7 +81,7 @@ print(med_aucs)
 # ================================
 # Try to use the pickle files as df for evaluate_model_nprop0
 import pickle
-pickle_files = list(pathlib.Path("data/property_benchmarks/temp_filtered_10").glob("*.pkl"))
+pickle_files = list(pathlib.Path("cache/property_benchmarks/temp_filtered_10").glob("*.pkl"))
 evaldf = pd.DataFrame()
 print("\nProcessing pickle files...")
 pickle_files = tqdm(pickle_files, desc="Processing pickle files")

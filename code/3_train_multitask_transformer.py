@@ -156,8 +156,8 @@ import importlib
 importlib.reload(mt)
 importlib.reload(me)
 
-model = me.MoE(tokenizer).to(DEVICE)
-# model = me.MoE.load("brick/moe").to(DEVICE)
+# model = me.MoE(tokenizer).to(DEVICE)
+model = me.MoE.load("brick/moe").to(DEVICE)
 model = torch.nn.DataParallel(model)
 trainable_params = sum(p.numel() for p in model.module.parameters() if p.requires_grad)
 print(f"{trainable_params/1e9} billion parameters")
@@ -188,3 +188,7 @@ trainer = Trainer(model)\
     .set_model_savepath(outdir / "moe")
 
 trainer.start()
+
+# save to brick/moe by copying outdir to brick/moe
+import shutil
+shutil.copytree(outdir / "moe", "brick/moe")

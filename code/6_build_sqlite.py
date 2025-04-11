@@ -1,4 +1,4 @@
-import os, sys, biobricks as bb, pandas as pd, shutil, sqlite3
+import os, sys, biobricks as bb, pandas as pd, shutil, sqlite3, pathlib
 import pyspark.sql, pyspark.sql.functions as F
 
 sys.path.insert(0, os.getcwd())
@@ -9,13 +9,15 @@ spark = pyspark.sql.SparkSession.builder.appName("ChemharmonyDataProcessing")
 spark = spark.config("spark.driver.memory", "64g").config("spark.driver.maxResultSize", "100g").getOrCreate()
     
 ch = bb.assets('chemharmony')
+outdir = pathlib.Path('cache/build_sqlite')
+outdir.mkdir(parents=True, exist_ok=True)
 
 tokenizer = spt.SelfiesPropertyValTokenizer.load('brick/selfies_property_val_tokenizer')
 
 #%% BUILD PROPERTY TABLES =================================================================
 pytorch_id_to_property_token = lambda x : tokenizer.assay_id_to_token_idx(x)
 pytorch_id_to_property_token_udf = F.udf(pytorch_id_to_property_token, pyspark.sql.types.LongType())
-property_tokens = spark.read.parquet("data/processed/activities.parquet")\
+property_tokens = spark.read.parquet("cache/preprocess_activities/activities.parquet")\
     .withColumnRenamed('assay','property_id')\
     .withColumnRenamed('assay_index','property_pytorch_index')\
     .withColumn("property_pytorch_index", F.col("property_pytorch_index").cast("int"))\
@@ -57,7 +59,7 @@ activities = raw_activities\
     .select('source_id','activity_id','property_id','property_token','substance_id','inchi','smiles','value','binary_value','value_token')
 
 # WRITE TABLE TO SQLITE =============================================================
-conn = sqlite3.connect('data/processed/cvae.sqlite')
+conn = sqlite3.connect((outdir / 'cvae.sqlite').as_posix())
 
 prop.toPandas().to_sql('property', conn, if_exists='replace', index=False)
 
@@ -70,7 +72,7 @@ activities.toPandas().to_sql('activity', conn, if_exists='replace', index=False)
 conn.close()
 
 ## CREATE INDEXES =============================================================
-conn = sqlite3.connect('data/processed/cvae.sqlite')
+conn = sqlite3.connect((outdir / 'cvae.sqlite').as_posix())
 cursor = conn.cursor()
 
 # Create indexes
@@ -87,7 +89,7 @@ conn.commit()
 conn.close()
 
 # MOVE RESULT TO BRICK/cvae.sqlite =============================================================
-shutil.move('data/processed/cvae.sqlite', 'brick/cvae.sqlite')
+shutil.move((outdir / 'cvae.sqlite').as_posix(), 'brick/cvae.sqlite')
 
 # DO A SIMPLE TEST QUERY =============================================================
 conn = sqlite3.connect('brick/cvae.sqlite')
