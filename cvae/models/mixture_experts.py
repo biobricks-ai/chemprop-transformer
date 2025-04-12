@@ -42,7 +42,12 @@ class MoE(nn.Module):
     def load(dirpath = pathlib.Path("brick/mtransform1")):
         dirpath = pathlib.Path(dirpath)
         tokenizer = SelfiesPropertyValTokenizer.load(dirpath / "spvt_tokenizer")
-        model = MoE(tokenizer)
+        state_dict = torch.load(dirpath / 'mtransformer.pt')
+        
+        hdim = state_dict['experts.0.encoder.layers.0.self_attn.in_proj_weight'].shape[0] // 3
+        num_experts = max(int(k.split('.')[1]) for k in state_dict.keys() if k.startswith('experts.')) + 1
+        
+        model = MoE(tokenizer, num_experts, hdim)
         model.load_state_dict(torch.load(dirpath / 'mtransformer.pt'))
         model.eval()
         return model
