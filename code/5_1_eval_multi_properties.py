@@ -13,6 +13,9 @@ outdir.mkdir(exist_ok=True, parents=True)
 
 temp_dir = outdir / "temp"
 temp_dir.mkdir(exist_ok=True)
+# clear all files in temp_dir
+for file in temp_dir.iterdir():
+    file.unlink()
 
 metrics_dir = outdir / "metrics"
 metrics_dir.mkdir(exist_ok=True)
@@ -92,15 +95,27 @@ def run_eval(i, raw_inp, raw_out, out_df, nprops):
     
     return pd.concat([out_df, batch_df]) if len(out_df) > 0 else batch_df
 
-batch_size = 16
+batch_size = 4
 nprops = 5
 val = mt.SequenceShiftDataset("cache/build_tensordataset/multitask_tensors/hld", tokenizer, nprops=nprops)
 valdl = torch.utils.data.DataLoader(val, batch_size=batch_size, shuffle=False)
 seen_inputs = set()
 
+# just keep going for 4 hours
+import time
+start_time = time.time()
+max_time = 4 * 60 * 60  # 4 hours in seconds
+
 for iter in tqdm.tqdm(range(24)):
     out_df = pd.DataFrame({'chemical_id':[], 'prior_assays':[], 'prior_values':[], 'assay':[], 'value':[], 'probs':[], 'nprops':[], 'prob_assays':[], 'prob_vals':[]})
     for i, (raw_inp, _, raw_out) in tqdm.tqdm(enumerate(valdl), total=len(val)/batch_size):
+        # Check if 4 hours have elapsed
+        if time.time() - start_time > max_time:
+            if not out_df.empty:
+                path = temp_dir / f"multitask_predictions_{str(uuid.uuid4())}.parquet"
+                out_df.to_parquet(path, index=False)
+            break
+            
         batch_tuples = tuple(map(lambda x, y: (tuple(x.tolist()), tuple(y.tolist())), raw_inp, raw_out))
         new_inputs_mask = [t not in seen_inputs for t in batch_tuples]
         seen_inputs.update(batch_tuples)
@@ -115,11 +130,14 @@ for iter in tqdm.tqdm(range(24)):
             out_df.to_parquet(temp_dir / f"multitask_predictions_{str(uuid.uuid4())}.parquet", index=False)
             out_df = pd.DataFrame({'chemical_id':[], 'prior_assays':[], 'prior_values':[], 'assay':[], 'value':[], 'probs':[], 'nprops':[], 'prob_assays':[], 'prob_vals':[]})
 
+        if time.time() - start_time > max_time:
+            break
+        
     if not out_df.empty:
         path = temp_dir / f"multitask_predictions_{str(uuid.uuid4())}.parquet"
         out_df.to_parquet(path, index=False)
 
-df0 = spark.read.parquet((temp_dir / "*.parquet").as_posix())
+df0 = spark.read.parquet(str(temp_dir / "*.parquet"))
 df1 = df0.withColumn("prior_assays", split(col("prior_assays"), " \+ ")) 
 df1.write.parquet((outdir / "multitask_predictions.parquet").as_posix(), mode="overwrite")
 

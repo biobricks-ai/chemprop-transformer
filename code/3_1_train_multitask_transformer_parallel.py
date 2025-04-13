@@ -1,4 +1,4 @@
-import sys, os
+import sys, os, shutil
 import numpy as np
 import itertools
 import pathlib
@@ -94,6 +94,51 @@ class Trainer():
         loss.backward()
         self.optimizer.step()
         return loss.item()
+    
+    def _evaluate_balanced_accuracy(self):
+        self.model.eval()
+        all_preds = []
+        all_targets = []
+        
+        dist.barrier()
+        for i, (inp, teach, out) in enumerate(self.valdl):
+            inp, teach, out = inp.to(self.rank), teach.to(self.rank), out.to(self.rank)
+            with torch.no_grad():
+                pred = self.model(inp, teach)
+                pred = pred.argmax(dim=2)
+                all_preds.append(pred)
+                all_targets.append(out)
+        
+        # Concatenate predictions and targets
+        all_preds = torch.cat(all_preds, dim=0)
+        all_targets = torch.cat(all_targets, dim=0)
+        
+        # Gather predictions and targets from all processes
+        gathered_preds = [torch.zeros_like(all_preds) for _ in range(dist.get_world_size())]
+        gathered_targets = [torch.zeros_like(all_targets) for _ in range(dist.get_world_size())]
+        
+        dist.all_gather(gathered_preds, all_preds)
+        dist.all_gather(gathered_targets, all_targets)
+        
+        if self.rank == 0:
+            # Combine gathered tensors
+            all_preds = torch.cat(gathered_preds, dim=0)
+            all_targets = torch.cat(gathered_targets, dim=0)
+            
+            # Calculate balanced accuracy
+            unique_classes = torch.unique(all_targets)
+            class_accuracies = []
+            
+            for cls in unique_classes:
+                mask = all_targets == cls
+                if mask.sum() > 0:
+                    class_acc = (all_preds[mask] == all_targets[mask]).float().mean()
+                    class_accuracies.append(class_acc)
+            
+            balanced_accuracy = torch.stack(class_accuracies).mean().item()
+            return balanced_accuracy
+        return 0.0
+
 
     def start(self):
         total_batches = len(self.trn_iterator)
@@ -105,49 +150,55 @@ class Trainer():
                 loss = self._train_batch(inp, teach, out)
                 if self.rank == 0:
                     with open(self.metrics_path, 'a') as f:
-                        f.write(f"{epoch}\t{i}\ttrain\t{loss:.4f}\n")
+                        f.write(f"train\t{i}\t{loss:.4f}\t{self.optimizer.param_groups[0]['lr']}\n")
                 
                 if i % 100 == 0:
                     eval_loss = self._evaluation_loss()
                     self.scheduler.step(eval_loss)
-                    
+                    bac = self._evaluate_balanced_accuracy()
                     if self.rank == 0:
                         if eval_loss < self.best_loss:
                             self.model.module.save(self.savepath)
                             
                         with open(self.metrics_path, 'a') as f:
                             lr = self.optimizer.param_groups[0]['lr']
-                            f.write(f"{epoch}\t{i}\teval\t{eval_loss:.4f}\t{lr}\n")
-                            print(f"Epoch: {epoch}, Step: {i}, Train Loss: {loss:.4f}, Eval Loss: {eval_loss:.4f}, LR: {lr}")
+                            f.write(f"eval\t{epoch}\t{i}\t{eval_loss:.4f}\t{lr}\n")
+                            print(f"Epoch: {epoch}, Step: {i}, Train Loss: {loss:.4f}, Eval Loss: {eval_loss:.4f}, LR: {lr}, BAC: {bac:.4f}")
 
 
 def main(rank, world_size):
+
+    outdir = pathlib.Path("cache/train_multitask_transformer_parallel")
+    outdir.mkdir(exist_ok=True)
+    
+    metricsdir = outdir / "metrics"
+    metricsdir.mkdir(exist_ok=True)
+
     setup(rank, world_size)
     tokenizer = cvae.tokenizer.SelfiesPropertyValTokenizer.load('brick/selfies_property_val_tokenizer')
-    model = me.MoE(tokenizer)
+
+    # model = me.MoE(tokenizer, num_experts=32, hdim=128)
+    model = me.MoE.load(outdir / "moe")
     # model = me.MoE.load("brick/moe")
     num_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     
     
-    trnds = mt.SequenceShiftDataset("cache/build_tensordataset/multitask_tensors/trn", tokenizer, nprops=20)
+    trnds = mt.SequenceShiftDataset("cache/build_tensordataset/multitask_tensors/trn", tokenizer, nprops=6)
     trndl = torch.utils.data.DataLoader(
-        trnds, batch_size=16*8, shuffle=False, num_workers=4, pin_memory=True,
+        trnds, batch_size=16*12, shuffle=False, num_workers=4, pin_memory=True,
         sampler=torch.utils.data.distributed.DistributedSampler(trnds, num_replicas=world_size, rank=rank)
     )
     
-    valds = mt.SequenceShiftDataset("cache/build_tensordataset/multitask_tensors/tst", tokenizer, nprops=20)
-    valdl = torch.utils.data.DataLoader(valds, batch_size=16*8, shuffle=False, num_workers=0, pin_memory=True,
+    valds = mt.SequenceShiftDataset("cache/build_tensordataset/multitask_tensors/tst", tokenizer, nprops=6)
+    valdl = torch.utils.data.DataLoader(valds, batch_size=16*12, shuffle=False, num_workers=0, pin_memory=True,
         sampler=torch.utils.data.distributed.DistributedSampler(valds, num_replicas=world_size, rank=rank))
-    
-    outdir = pathlib.Path("cache/train_multitask_transformer")
-    outdir.mkdir(exist_ok=True)
-    
-    trainer = Trainer(model, rank, tokenizer, max_epochs=10)\
+
+    trainer = Trainer(model, rank, tokenizer, max_epochs=10000)\
         .set_trn_iterator(trndl)\
         .set_validation_dataloader(valdl)\
         .set_mask_percent(0.1)\
-        .set_model_savepath('cache/train_multitask_transformer/moe')\
-        .set_metrics_file(pathlib.Path("cache/train_multitask_transformer/metrics/multitask_loss.tsv"), overwrite=True)
+        .set_model_savepath(outdir / "moe")\
+        .set_metrics_file(metricsdir / "multitask_loss.tsv", overwrite=True)
     
     if rank ==0:
         print(f"{len(trndl)} train batches")
@@ -157,6 +208,10 @@ def main(rank, world_size):
     trainer.start()
 
     cleanup()
+
+    if os.path.exists("brick/moe"):
+        shutil.rmtree("brick/moe")
+    shutil.copytree(outdir / "moe", "brick/moe")
 
 if __name__ == "__main__":
     world_size = torch.cuda.device_count()
