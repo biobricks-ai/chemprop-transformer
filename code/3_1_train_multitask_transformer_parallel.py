@@ -12,6 +12,11 @@ import cvae.models.multitask_transformer as mt
 import cvae.models.mixture_experts as me
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
+import logging
+
+logdir = pathlib.Path("cache/train_multitask_transformer_parallel/logs")
+logdir.mkdir(exist_ok=True)
+cvae.utils.setup_logging(logdir / "log.txt", logging)
 
 def setup(rank, world_size):
     os.environ['MASTER_ADDR'] = 'localhost'
@@ -25,9 +30,11 @@ def cleanup():
 class Trainer():
     def __init__(self, model, rank, tokenizer, max_epochs=10000):
         self.rank = rank
-        self.model = DDP(model.to(rank), device_ids=[rank])
+        self.model = DDP(model.to(rank), device_ids=[rank], find_unused_parameters=True) 
+        # self.model = DDP(model.to(rank), device_ids=[rank])
         self.optimizer = optim.AdamW(model.parameters(), lr=1e-4, betas=(0.9, 0.98), eps=1e-9)
-        self.lossfn = mt.MultitaskTransformer.lossfn(ignore_index=tokenizer.pad_idx)
+        # self.lossfn = mt.MultitaskTransformer.lossfn(ignore_index=tokenizer.pad_idx)
+        self.lossfn = self.model.module.build_lossfn()
         self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='min', factor=0.5, patience=5, min_lr=1e-6)
         self.max_epochs = max_epochs
         self.metrics_path = None
@@ -56,7 +63,7 @@ class Trainer():
             self.metrics_path = metrics_path
             if overwrite:
                 with open(self.metrics_path, 'w') as f:
-                    f.write("epoch\tstep\ttype\tloss\n")
+                    f.write("type\tbatch\tloss\tlr\n")
         return self
 
     def _evaluation_loss(self):
@@ -92,8 +99,9 @@ class Trainer():
         pred = self.model(inp, teach)
         loss = self.lossfn(self.model.module.parameters(), pred.permute(0, 2, 1), out)
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
         self.optimizer.step()
-        return loss.item()
+        return loss.detach().item()
     
     def _evaluate_balanced_accuracy(self):
         self.model.eval()
@@ -144,26 +152,41 @@ class Trainer():
         total_batches = len(self.trn_iterator)
         self.validation_interval = total_batches // 4  # Evaluate four times per epoch
         for epoch in range(self.max_epochs):
-            self.valdl.sampler.set_epoch(epoch)
-            self.trn_iterator.sampler.set_epoch(epoch)  # Ensure randomness in distributed training
+            self.model.train()  # Ensure model is in training mode
+            self.trn_iterator.sampler.set_epoch(epoch)
+            
             for i, (inp, teach, out) in enumerate(self.trn_iterator):
                 loss = self._train_batch(inp, teach, out)
-                if self.rank == 0:
-                    with open(self.metrics_path, 'a') as f:
-                        f.write(f"train\t{i}\t{loss:.4f}\t{self.optimizer.param_groups[0]['lr']}\n")
                 
-                if i % 100 == 0:
-                    eval_loss = self._evaluation_loss()
+                if (i+1) % 100 == 0:
+                    # Ensure all processes are synced before evaluation
+                    torch.cuda.synchronize()
+                    dist.barrier()
+                    
+                    self.model.eval()  # Switch to eval mode
+                    with torch.no_grad():  # Prevent gradient computation during eval
+                        eval_loss = self._evaluation_loss()
+                        bac = self._evaluate_balanced_accuracy()
+                    
                     self.scheduler.step(eval_loss)
-                    bac = self._evaluate_balanced_accuracy()
+                    
                     if self.rank == 0:
                         if eval_loss < self.best_loss:
+                            self.best_loss = eval_loss
                             self.model.module.save(self.savepath)
                             
                         with open(self.metrics_path, 'a') as f:
-                            lr = self.optimizer.param_groups[0]['lr']
-                            f.write(f"eval\t{epoch}\t{i}\t{eval_loss:.4f}\t{lr}\n")
-                            print(f"Epoch: {epoch}, Step: {i}, Train Loss: {loss:.4f}, Eval Loss: {eval_loss:.4f}, LR: {lr}, BAC: {bac:.4f}")
+                            f.write(f"eval\t{i}\t{eval_loss:.4f}\t{self.optimizer.param_groups[0]['lr']}\n")
+                            print(f"Epoch: {epoch}, Step: {i}, Train Loss: {loss:.4f}, "
+                                f"Eval Loss: {eval_loss:.4f}, LR: {self.optimizer.param_groups[0]['lr']}, "
+                                f"BAC: {bac:.4f}")
+                    
+                    self.model.train()  # Switch back to training mode
+                    dist.barrier()  # Ensure all processes are synced before continuing
+
+                elif self.rank == 0:
+                    with open(self.metrics_path, 'a') as f:
+                        f.write(f"train\t{i}\t{loss:.4f}\t{self.optimizer.param_groups[0]['lr']}\n")
 
 
 def main(rank, world_size):
@@ -177,20 +200,20 @@ def main(rank, world_size):
     setup(rank, world_size)
     tokenizer = cvae.tokenizer.SelfiesPropertyValTokenizer.load('brick/selfies_property_val_tokenizer')
 
-    # model = me.MoE(tokenizer, num_experts=32, hdim=128)
-    model = me.MoE.load(outdir / "moe")
+    model = me.MoE(tokenizer, num_experts=16, hdim=32, dim_feedforward=32, nhead=8)
+    # model = me.MoE.load(outdir / "moe")
     # model = me.MoE.load("brick/moe")
     num_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     
     
     trnds = mt.SequenceShiftDataset("cache/build_tensordataset/multitask_tensors/trn", tokenizer, nprops=6)
     trndl = torch.utils.data.DataLoader(
-        trnds, batch_size=16*12, shuffle=False, num_workers=4, pin_memory=True,
+        trnds, batch_size=16*12*2, shuffle=False, num_workers=4, pin_memory=True,
         sampler=torch.utils.data.distributed.DistributedSampler(trnds, num_replicas=world_size, rank=rank)
     )
     
     valds = mt.SequenceShiftDataset("cache/build_tensordataset/multitask_tensors/tst", tokenizer, nprops=6)
-    valdl = torch.utils.data.DataLoader(valds, batch_size=16*12, shuffle=False, num_workers=0, pin_memory=True,
+    valdl = torch.utils.data.DataLoader(valds, batch_size=16*12*2, shuffle=False, num_workers=4, pin_memory=True,
         sampler=torch.utils.data.distributed.DistributedSampler(valds, num_replicas=world_size, rank=rank))
 
     trainer = Trainer(model, rank, tokenizer, max_epochs=10000)\
