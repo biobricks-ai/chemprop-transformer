@@ -27,6 +27,31 @@ evaldf[evaldf['source'] == 'tox21'].groupby(['nprops']).aggregate({'AUC': 'media
 # 1       0.871136     66
 # 0       0.829932     18
 
+# region source evaluations ================================
+res = evaldf.groupby(['source','nprops']).aggregate({'AUC': 'median','assay':'count'}).reset_index()
+
+# add 'meanauc' column
+res['meanauc'] = res.groupby('source')['AUC'].transform('median')
+
+# pivot wider, make nprops into a column 
+# pivot wider, make nprops into columns
+pivot_res = res.pivot(index='source', columns='nprops', values='AUC')
+pivot_res['mean_auc'] = pivot_res.mean(axis=1)
+pivot_res = pivot_res.sort_values('mean_auc', ascending=False)
+pivot_res = pivot_res.drop('mean_auc', axis=1)
+
+# Create heatmap
+plt.figure(figsize=(10, 8))
+sns.heatmap(pivot_res, annot=True, cmap='RdYlGn', center=0.75, vmin=0.5, vmax=1.0, fmt='.3f')
+plt.title('AUC by Source and Number of Prior Properties')
+plt.xlabel('Number of Prior Properties')
+plt.ylabel('Source')
+plt.tight_layout()
+plt.savefig('notebook/plots/source_nprops_heatmap.png')
+plt.close()
+
+# endregion
+
 #%% CATEGORICAL BENCHMARK ======================================================
 
 pcat = pd.read_sql("""SELECT s.source, property_token,title,category,strength FROM property p 
