@@ -134,7 +134,7 @@ class MultitaskTransformer(nn.Module):
     
     @staticmethod
     def lossfn(ignore_index = -100, weight_decay=1e-5):
-        ce_lossfn = nn.CrossEntropyLoss(reduction='mean', ignore_index=ignore_index, label_smoothing=0.05)
+        ce_lossfn = nn.CrossEntropyLoss(reduction='mean', ignore_index=ignore_index, label_smoothing=0.01)
         def lossfn(parameters, logits, output):
             ce_loss = ce_lossfn(logits, output)
             # l2 = sum(p.pow(2.0).sum() for p in parameters if p.requires_grad)

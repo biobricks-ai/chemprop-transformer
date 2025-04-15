@@ -24,7 +24,8 @@ def build_multitask_supervised_data(spark):
         .groupby('encoded_selfies', 'assay_index') \
         .agg(F.collect_set('value').alias('values')) \
         .filter(F.size('values') == 1) \
-        .select('encoded_selfies', 'assay_index', F.element_at('values', 1).alias('value'))
+        .select('encoded_selfies', 'assay_index', F.element_at('values', 1).alias('value')) \
+        .cache()
         
     selfies_tok = cvae.tokenizer.selfies_tokenizer.SelfiesTokenizer().load('cache/preprocess_tokenizer/selfies_tokenizer.json')
     num_assays = int(data.agg(F.max('assay_index')).collect()[0][0] + 1)
@@ -42,7 +43,9 @@ def build_multitask_supervised_data(spark):
 
     gdata = data \
         .select("encoded_selfies", "assay_index", "value").distinct() \
-        .groupby("encoded_selfies").agg(F.collect_list(F.struct("assay_index", "value")).alias("assay_val_pairs"))
+        .groupby("encoded_selfies") \
+        .agg(F.collect_list(F.struct("assay_index", "value")).alias("assay_val_pairs")) \
+        .cache()
         
     trn, tst, hld = gdata.randomSplit([0.8, 0.1, 0.1], seed=37)
 

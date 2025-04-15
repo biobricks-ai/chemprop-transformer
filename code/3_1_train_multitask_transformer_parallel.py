@@ -32,10 +32,24 @@ class Trainer():
         self.rank = rank
         self.model = DDP(model.to(rank), device_ids=[rank], find_unused_parameters=True) 
         # self.model = DDP(model.to(rank), device_ids=[rank])
-        self.optimizer = optim.AdamW(model.parameters(), lr=1e-4, betas=(0.9, 0.98), eps=1e-9)
+        self.optimizer = optim.AdamW(
+            model.parameters(),
+            lr=1e-3,  # Moderate initial learning rate
+            betas=(0.9, 0.98),  # Transformer defaults
+            eps=1e-8,
+            weight_decay=0.01  # Add weight decay for regularization
+        )
         # self.lossfn = mt.MultitaskTransformer.lossfn(ignore_index=tokenizer.pad_idx)
         self.lossfn = self.model.module.build_lossfn()
-        self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='min', factor=0.5, patience=5, min_lr=1e-6)
+        self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+            self.optimizer,
+            mode='min',
+            factor=0.7,        # Less aggressive reduction (was 0.5)
+            patience=10,        # Reduced from 5 to respond faster
+            min_lr=1e-6,
+            cooldown=2,        # Add cooldown period to stabilize between reductions
+            verbose=True       # Print when learning rate changes
+        )
         self.max_epochs = max_epochs
         self.metrics_path = None
         self.best_loss = np.inf
@@ -158,7 +172,7 @@ class Trainer():
             for i, (inp, teach, out) in enumerate(self.trn_iterator):
                 loss = self._train_batch(inp, teach, out)
                 
-                if (i+1) % 100 == 0:
+                if (i+1) % 2000 == 0:
                     # Ensure all processes are synced before evaluation
                     torch.cuda.synchronize()
                     dist.barrier()
@@ -200,20 +214,21 @@ def main(rank, world_size):
     setup(rank, world_size)
     tokenizer = cvae.tokenizer.SelfiesPropertyValTokenizer.load('brick/selfies_property_val_tokenizer')
 
-    model = me.MoE(tokenizer, num_experts=16, hdim=32, dim_feedforward=32, nhead=8)
+    # model = me.MoE(tokenizer, num_experts=16, hdim=32, dim_feedforward=32, nhead=8, expert_layers=4) # /home/tomlue/git/ai.biobricks/chemprop-transformer/notebook/plots/multitask_transformer_metrics.1.png
+    model = me.MoE(tokenizer, num_experts=16, hdim=32*8, dim_feedforward=32*8, nhead=4, balance_loss_weight=.1, expert_layers=6)
     # model = me.MoE.load(outdir / "moe")
     # model = me.MoE.load("brick/moe")
     num_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     
     
-    trnds = mt.SequenceShiftDataset("cache/build_tensordataset/multitask_tensors/trn", tokenizer, nprops=6)
+    trnds = mt.SequenceShiftDataset("cache/build_tensordataset/multitask_tensors/trn", tokenizer, nprops=20)
     trndl = torch.utils.data.DataLoader(
-        trnds, batch_size=16*12*2, shuffle=False, num_workers=4, pin_memory=True,
+        trnds, batch_size=16*4, shuffle=False, num_workers=4, pin_memory=True,
         sampler=torch.utils.data.distributed.DistributedSampler(trnds, num_replicas=world_size, rank=rank)
     )
     
-    valds = mt.SequenceShiftDataset("cache/build_tensordataset/multitask_tensors/tst", tokenizer, nprops=6)
-    valdl = torch.utils.data.DataLoader(valds, batch_size=16*12*2, shuffle=False, num_workers=4, pin_memory=True,
+    valds = mt.SequenceShiftDataset("cache/build_tensordataset/multitask_tensors/tst", tokenizer, nprops=20)
+    valdl = torch.utils.data.DataLoader(valds, batch_size=16*4, shuffle=False, num_workers=4, pin_memory=True,
         sampler=torch.utils.data.distributed.DistributedSampler(valds, num_replicas=world_size, rank=rank))
 
     trainer = Trainer(model, rank, tokenizer, max_epochs=10000)\

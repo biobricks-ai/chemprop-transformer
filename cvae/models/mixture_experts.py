@@ -6,10 +6,10 @@ import cvae.utils
 class MoE(nn.Module):
     
     def __init__(self, tokenizer, num_experts=2, hdim=32, nhead=8, dim_feedforward=32, noise_factor=.1, top_k_percent=.5, 
-                 dropout_rate=.1, balance_loss_weight=1.0, diversity_loss_weight=0.1, ema_decay=0.99):
+                 dropout_rate=.1, balance_loss_weight=1.0, diversity_loss_weight=0.1, ema_decay=0.99, expert_layers=4):
         super().__init__()
         self.tokenizer : SelfiesPropertyValTokenizer = tokenizer
-        mkexpert = lambda: MultitaskTransformer(tokenizer, hdim, nhead=nhead, dim_feedforward=dim_feedforward)
+        mkexpert = lambda: MultitaskTransformer(tokenizer, hdim, nhead=nhead, dim_feedforward=dim_feedforward, num_layers=expert_layers)
         self.experts = nn.ModuleList([mkexpert() for _ in range(num_experts)])
         self.gating_network = MultitaskTransformer(tokenizer, hdim, output_size=num_experts)
         self.hdim = hdim
@@ -106,7 +106,7 @@ class MoE(nn.Module):
         )
         
         # Debug print
-        print(f"Expert usage fractions: {smoothed_usage.detach().cpu().numpy()}")
+        # print(f"Expert usage fractions: {smoothed_usage.detach().cpu().numpy()}")
         print(f"Max expert usage: {smoothed_usage.max().item():.4f}, "
               f"Min usage: {smoothed_usage.min().item():.4f}")
         print(f"Balance loss: {balance_loss.item():.4f}")
@@ -185,14 +185,11 @@ class MoE(nn.Module):
         return combined_output
     
     def build_lossfn(self):
-        mtlossfn = mt.MultitaskTransformer.focal_lossfn(ignore_index=self.tokenizer.pad_idx)
+        mtlossfn = mt.MultitaskTransformer.lossfn(ignore_index=self.tokenizer.pad_idx)
         def lossfn(param, logit, output):
             main_loss = mtlossfn(param, logit, output)
             total_loss = main_loss + self.balance_loss + self.diversity_loss
-            
-            # Debug logging
-            print(f"Loss components - Main: {main_loss:.4f}, Balance: {self.balance_loss:.4f}, Diversity: {self.diversity_loss:.4f}")
-            print(f"Total loss: {total_loss:.4f}")
+            print(f"Loss components - Main: {main_loss:.4f}, Balance: {self.balance_loss:.4f}, Diversity: {self.diversity_loss:.4f}, Total loss: {total_loss:.4f}")
             
             return total_loss
         return lossfn

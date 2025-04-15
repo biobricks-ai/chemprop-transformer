@@ -53,3 +53,8 @@ data.write.parquet((outdir / 'activities.parquet').as_posix(), mode='overwrite')
 logging.info(f"wrote {outdir / 'activities.parquet'}")
 
 spark.stop()
+
+## count activities for a test ===========================================================
+spark = cvae.utils.get_spark_session()
+data = spark.read.parquet((outdir / 'activities.parquet').as_posix())
+assert data.count() > 10e6 # should have more than 10m activities
