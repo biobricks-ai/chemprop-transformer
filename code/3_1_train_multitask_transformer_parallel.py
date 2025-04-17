@@ -19,10 +19,7 @@ logdir.mkdir(exist_ok=True)
 cvae.utils.setup_logging(logdir / "log.txt", logging)
 
 def setup(rank, world_size):
-    os.environ['MASTER_ADDR'] = 'localhost'
-    os.environ['MASTER_PORT'] = '12355'
-    dist.init_process_group("nccl", rank=rank, world_size=world_size)
-    torch.cuda.set_device(rank)
+    dist.init_process_group("nccl", init_method="env://", rank=rank, world_size=world_size)
 
 def cleanup():
     dist.destroy_process_group()
@@ -34,7 +31,7 @@ class Trainer():
         # self.model = DDP(model.to(rank), device_ids=[rank])
         self.optimizer = optim.AdamW(
             model.parameters(),
-            lr=1e-3,  # Moderate initial learning rate
+            lr=1e-4,  # Moderate initial learning rate
             betas=(0.9, 0.98),  # Transformer defaults
             eps=1e-8,
             weight_decay=0.01  # Add weight decay for regularization
@@ -215,7 +212,7 @@ def main(rank, world_size):
     tokenizer = cvae.tokenizer.SelfiesPropertyValTokenizer.load('brick/selfies_property_val_tokenizer')
 
     # model = me.MoE(tokenizer, num_experts=16, hdim=32, dim_feedforward=32, nhead=8, expert_layers=4) # /home/tomlue/git/ai.biobricks/chemprop-transformer/notebook/plots/multitask_transformer_metrics.1.png
-    model = me.MoE(tokenizer, num_experts=16, hdim=32*8, dim_feedforward=32*8, nhead=4, balance_loss_weight=.1, expert_layers=6)
+    model = me.MoE(tokenizer, num_experts=32, hdim=32*8, dim_feedforward=32*8, nhead=4, balance_loss_weight=.1, expert_layers=6)
     # model = me.MoE.load(outdir / "moe")
     # model = me.MoE.load("brick/moe")
     num_params = sum(p.numel() for p in model.parameters() if p.requires_grad)

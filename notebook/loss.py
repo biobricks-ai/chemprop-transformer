@@ -15,16 +15,26 @@ batch_skip = int(args[0]) if len(args) > 0 else 0
 metrics_file = 'cache/train_multitask_transformer_parallel/metrics/multitask_loss.tsv'
 
 def draw_plot(last_scheduler_length=0):
-    # Read the first three columns of the metrics file
+    # Read the first three columns of the metrics file type, batch, loss, lr
     data = pd.read_csv(metrics_file, sep='\t')
-    data['type'] = data['type'].replace('scheduler', 'sched')
     scheduler_length = len(data[data['type'] == 'train']['loss'])
     
+    # data['batch'] = data.index + 1
+    # set data['batch'] to be the index right now it is the batch identifier
+    data['batch'] = data.index
+    data = data[data['batch'] > batch_skip]
+
+    # create and append a new dataframe that batches the 'train' type and finds the average loss
+    sched_interval = 20
+    sched_data = data[data['type'] == 'train'].assign(batch=lambda x: (x['batch'] // sched_interval) * sched_interval)
+    sched_data = sched_data.groupby('batch')['loss'].mean().reset_index()
+    sched_data['type'] = 'sched'
+    data = pd.concat([data, sched_data])
+
     if scheduler_length == last_scheduler_length:
         return last_scheduler_length
     
-    data['batch'] = data.index + 1
-    data = data[data['batch'] > batch_skip]
+    
 
     def print_losses(loss_type):
         dt = data[data['type'] == loss_type]['loss'].round(6)
