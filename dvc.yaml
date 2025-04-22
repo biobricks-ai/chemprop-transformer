@@ -23,6 +23,13 @@ stages:
     outs:
     - data/tensordataset/
     - brick/selfies_property_val_tokenizer/
+  
+  pack_tensordataset:
+    cmd: PYTHONPATH=./ python code/3_0_pack_multitask_tensors.py
+    deps:
+    - cache/build_multitask_tensors/
+    outs:
+    - cache/pack_multitask_tensors/
 
   train:
     cmd: python code/3_train_multitask_transformer.py

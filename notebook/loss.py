@@ -25,7 +25,7 @@ def draw_plot(last_scheduler_length=0):
     data = data[data['batch'] > batch_skip]
 
     # create and append a new dataframe that batches the 'train' type and finds the average loss
-    sched_interval = 20
+    sched_interval = 200
     sched_data = data[data['type'] == 'train'].assign(batch=lambda x: (x['batch'] // sched_interval) * sched_interval)
     sched_data = sched_data.groupby('batch')['loss'].mean().reset_index()
     sched_data['type'] = 'sched'
