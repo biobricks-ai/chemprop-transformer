@@ -28,9 +28,8 @@ import cvae.models.mixture_experts as me
 import torch.distributed as dist
 from torch.amp import autocast, GradScaler
 from torch.nn.parallel import DistributedDataParallel as DDP
-from transformers import get_cosine_schedule_with_warmup
-from torch.optim.lr_scheduler import OneCycleLR
-from torch.optim.lr_scheduler import SequentialLR, LinearLR, CosineAnnealingWarmRestarts
+from torch.optim.lr_scheduler import SequentialLR, LinearLR, ReduceLROnPlateau
+from lion_pytorch import Lion
 
 import logging
 import time
@@ -56,10 +55,12 @@ torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
 mp.set_start_method("fork", force=True) 
 
-# Set up logging
+# Set up logging and clear old log files
 logdir = pathlib.Path("cache/train_multitask_transformer_parallel/logs")
 logdir.mkdir(exist_ok=True, parents=True)
 cvae.utils.setup_logging(logdir / "log.txt", logging)
+with open(logdir / "log.txt", "w") as f:
+    f.truncate()
 
 # paths
 outdir = pathlib.Path("cache/train_multitask_transformer_parallel")
@@ -103,8 +104,6 @@ class Trainer():
         model = model.to(rank)
         
         with torch.inference_mode():
-            dummy_inp = torch.full((1, 128), fill_value=tokenizer.PAD_IDX, dtype=torch.long, device=rank)
-            dummy_teach = torch.full((1, 42), fill_value=tokenizer.PAD_IDX, dtype=torch.long, device=rank)
             res = model(firstbatch[0].to(rank), firstbatch[1].to(rank))  # warm-up forward pass
             
         model = torch.compile(model)
@@ -114,39 +113,52 @@ class Trainer():
         # Add gradient accumulation for effectively larger batch sizes
         self.gradient_accumulation_steps = 8
         effective_batch_size = batch_size * torch.cuda.device_count() * self.gradient_accumulation_steps  # 16 * 8 * 8
-        base_lr = 2e-4
+        base_lr = 1e-5
         warmup_steps = 200  # Can be tuned
 
-        self.optimizer = optim.AdamW(
+        # self.optimizer = optim.AdamW(
+        #     model.parameters(),
+        #     lr=base_lr,
+        #     betas=(0.9, 0.98),
+        #     eps=1e-8,
+        #     weight_decay=0.01
+        # )
+
+        self.optimizer = Lion(
             model.parameters(),
-            lr=base_lr,
-            betas=(0.9, 0.98),
-            eps=1e-8,
-            weight_decay=0.01
+            lr=base_lr,            # start with what you used in AdamW
+            betas=(0.9, 0.99),  # typical setting
+            weight_decay=1e-2
         )
 
-        self.scheduler = SequentialLR(
-            self.optimizer,
-            schedulers=[
-                LinearLR(self.optimizer, start_factor=0.1, total_iters=warmup_steps),
-                CosineAnnealingWarmRestarts(self.optimizer, T_0=2000, T_mult=2)
-            ],
-            milestones=[warmup_steps]
-        )
+        # linear_scheduler = LinearLR(self.optimizer, start_factor=0.1, total_iters=warmup_steps)
+        self.scheduler = ReduceLROnPlateau(self.optimizer, mode='min', factor=0.5, patience=5, verbose=True)
+        # self.scheduler = linear_scheduler  # Use only linear warmup, handle plateau separately
+        # self.plateau_scheduler = plateau  # Store plateau scheduler to call separately
+        # self.scheduler = SequentialLR(
+        #     self.optimizer,
+        #     schedulers=[
+        #         linear_scheduler,
+        #         plateau
+        #     ],
+        #     milestones=[warmup_steps]
+        # )
 
-        self.lossfn = self.model.module.build_lossfn()
+        # self.lossfn = self.model.module.build_lossfn()
+        self.lossfn = self.model.module.build_value_only_lossfn(device=self.rank)
+
         # self.lossfn = self.safe_loss_fn
         self.metrics_path = None
         self.best_loss = np.inf
         self.tokenizer = tokenizer
         self.eval_loss = mt.MultitaskTransformer.build_eval_lossfn(value_indexes=self.tokenizer.value_indexes().values(), device=self.rank)
         
-        
         # Update GradScaler initialization with device parameter
         self.scaler = GradScaler()
         
         # Reduce evaluation frequency
-        self.eval_every = 2000
+        self.eval_every = 100
+        self.eval_samples = 1000
     
     def log(self, msg):
         if self.rank==0:
@@ -177,13 +189,20 @@ class Trainer():
                     f.write("type\tbatch\tloss\tlr\n")
         return self
 
-    def _evaluation_loss(self):
+    def _evaluation_loss(self, max_eval_batches=None):
+        
+        max_eval_batches = self.eval_samples if max_eval_batches is None else max_eval_batches
+        
         self.model.eval()
         total_loss = 0.0
         num_samples = 0
         
         dist.barrier()
         for i, (inp, teach, out) in enumerate(self.valdl):
+            # Stop if we've reached max_eval_batches
+            if max_eval_batches is not None and i >= max_eval_batches:
+                break
+                
             inp, teach, out = inp.to(self.rank), teach.to(self.rank), out.to(self.rank)
             with torch.no_grad():
                 with autocast(device_type='cuda', dtype=torch.float16):  # Use mixed precision for evaluation too
@@ -212,8 +231,6 @@ class Trainer():
             self.optimizer.zero_grad()
             
         inp, teach, out = inp.to(self.rank), teach.to(self.rank), out.to(self.rank)
-        assert teach.max().item() < self.tokenizer.vocab_size, "teach has invalid index"
-        assert out.max().item() < self.tokenizer.vocab_size, "out has invalid index"
 
         with autocast(device_type='cuda', dtype=torch.float16):
             pred = self.model(inp, teach) # [batch_size, seq_len, vocab_size]
@@ -231,12 +248,15 @@ class Trainer():
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
             self.scaler.step(self.optimizer)
             self.scaler.update()
-            self.scheduler.step()
+            self.scheduler.step(loss.detach().item())
         
         self.global_step += 1
         return loss.detach().item() * self.gradient_accumulation_steps
     
-    def _evaluate_balanced_accuracy(self):
+    def _evaluate_balanced_accuracy(self, max_eval_batches=None):
+        
+        max_eval_batches = self.eval_samples if max_eval_batches is None else max_eval_batches
+
         self.model.eval()
         selected_preds = []
         selected_targets = []
@@ -245,6 +265,10 @@ class Trainer():
 
         dist.barrier()
         for i, (inp, teach, out) in enumerate(self.valdl):
+            # Stop if we've reached max_eval_batches
+            if max_eval_batches is not None and i >= max_eval_batches:
+                break
+                
             inp, teach, out = inp.to(self.rank), teach.to(self.rank), out.to(self.rank)
             with torch.no_grad():
                 with autocast(device_type='cuda', dtype=torch.float16):
@@ -376,9 +400,9 @@ def main(rank, world_size):
     # model = me.MoE(tokenizer, num_experts=8, hdim=512, dim_feedforward=2048, nhead=8, balance_loss_weight=.1, expert_layers=8)
     
     # v4 model = me.MoE(tokenizer, num_experts=8, hdim=512, dim_feedforward=2048, nhead=8, balance_loss_weight=.1, expert_layers=8)
-    model = me.MoE(tokenizer, num_experts=16, hdim=512, dim_feedforward=2048, nhead=8, balance_loss_weight=0.1, expert_layers=8)
+    # model = me.MoE(tokenizer, num_experts=16, hdim=512, dim_feedforward=2048, nhead=8, balance_loss_weight=0.1, expert_layers=8)
 
-    # model = me.MoE.load(outdir / "moe")
+    model = me.MoE.load(outdir / "moe")
     # model.balance_loss_weight = 1.0
 
     # model = me.MoE.load("brick/moe")
@@ -395,7 +419,8 @@ def main(rank, world_size):
 
     prefetch_factor = 100
 
-    trnds = mt.SequenceShiftDataset("cache/build_tensordataset/multitask_tensors/trn", tokenizer, nprops=20)
+    # trnds = mt.SequenceShiftDataset("cache/build_tensordataset/multitask_tensors/trn", tokenizer, nprops=20)
+    trnds = mt.FastPackedSequenceShiftDataset("cache/pack_multitask_tensors/packed_trn")
     trndl = torch.utils.data.DataLoader(
         trnds, batch_size=batch_size, shuffle=False, 
         num_workers=train_workers,
@@ -405,8 +430,9 @@ def main(rank, world_size):
         sampler=torch.utils.data.distributed.DistributedSampler(
             trnds, num_replicas=world_size, rank=rank, drop_last=True)
     )
-
-    valds = mt.SequenceShiftDataset("cache/build_tensordataset/multitask_tensors/tst", tokenizer, nprops=20)
+    
+    # valds = mt.SequenceShiftDataset("cache/build_tensordataset/multitask_tensors/tst", tokenizer, nprops=20)
+    valds = mt.FastPackedSequenceShiftDataset("cache/pack_multitask_tensors/packed_tst")
     valdl = torch.utils.data.DataLoader(
         valds, batch_size=batch_size, shuffle=False, 
         num_workers=val_workers,

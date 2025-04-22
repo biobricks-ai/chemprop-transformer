@@ -1,11 +1,18 @@
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch, torch.nn as nn, torch.nn.functional as F
 import torch.utils.data
+import json
+from torch import Tensor
+from typing import Tuple
+from torch.utils.data import Dataset
+
 import math
 import pathlib
 import tqdm
+import bisect
 
 from cvae.tokenizer.selfies_property_val_tokenizer import SelfiesPropertyValTokenizer
 import cvae.utils
@@ -44,40 +51,45 @@ class PositionalEncoding(nn.Module):
         pe = pe.unsqueeze(0)  # Shape: [1, max_len, d_model]
         self.register_buffer('pe', pe)
 
+    # def forward(self, x):
+    #     # x shape: [batch_size, sequence_length, d_model]
+    #     # Update positional encoding to match batch size and sequence length
+    #     x = x + self.pe[:, :x.size(1)].repeat(x.size(0), 1, 1)
+    #     return self.dropout(x)
+    
     def forward(self, x):
-        # x shape: [batch_size, sequence_length, d_model]
-        # Update positional encoding to match batch size and sequence length
-        x = x + self.pe[:, :x.size(1)].repeat(x.size(0), 1, 1)
+        x = x + self.pe[:, :x.size(1)]
         return self.dropout(x)
 
+
+# def generate_square_subsequent_mask(sz: int) -> torch.Tensor:
+#     """ Generate the attention mask for causal decoding """
+#     mask = (torch.triu(torch.ones(sz, sz)) == 1).transpose(0, 1).float()
+#     mask = mask.masked_fill(mask == 0, float("-inf")).masked_fill(mask == 1, float(0.0))
+#     return mask
+
 def generate_square_subsequent_mask(sz: int) -> torch.Tensor:
-    """ Generate the attention mask for causal decoding """
-    mask = (torch.triu(torch.ones(sz, sz)) == 1).transpose(0, 1).float()
-    mask = mask.masked_fill(mask == 0, float("-inf")).masked_fill(mask == 1, float(0.0))
+    """Generate a standard causal mask (upper triangular with -inf above diag)"""
+    return torch.triu(torch.full((sz, sz), float('-inf')), diagonal=1)
+
+# def generate_custom_subsequent_mask(sz: int) -> torch.Tensor:
+#     """ Generate a custom attention mask for causal decoding with specific unmasked positions """
+#     mask = generate_square_subsequent_mask(sz)
+    
+#     for i in range(1, sz-1, 2):
+#         mask[i,i+1] = 0.0
+    
+#     return mask
+
+@torch.no_grad()
+def generate_custom_subsequent_mask(sz: int, device=None) -> torch.Tensor:
+    mask = torch.full((sz, sz), float('-inf'), device=device)
+    mask = torch.triu(mask, diagonal=1)
+    for i in range(1, sz - 1, 2):
+        mask[i, i + 1] = 0.0  # allow peeking
     return mask
 
-def generate_custom_subsequent_mask(sz: int) -> torch.Tensor:
-    """ Generate a custom attention mask for causal decoding with specific unmasked positions """
-    mask = generate_square_subsequent_mask(sz)
-    
-    for i in range(1, sz-1, 2):
-        mask[i,i+1] = 0.0
-    
-    return mask
 
-def generate_static_mask(selfies_sz: int, assayval_sz:int) -> torch.Tensor:
-    sf_sf_mask = generate_square_subsequent_mask(selfies_sz)
-    sf_av_mask = torch.zeros((selfies_sz, assayval_sz)) # no mask
-    av_sf_mask = torch.zeros((assayval_sz, selfies_sz)) # no mask
-    
-    av_av_sz = assayval_sz // 2
-    av_av_mask = torch.tril(torch.ones((av_av_sz,av_av_sz), dtype=torch.bool)).repeat_interleave(2, dim=1).repeat_interleave(2,dim=0).float()
-    av_av_mask = av_av_mask.masked_fill(av_av_mask == 1., float(0.0)).masked_fill(av_av_mask == 0., float("-inf"))
-    
-    mask = torch.cat([torch.cat([sf_sf_mask, sf_av_mask], dim=1), torch.cat([av_sf_mask, av_av_mask], dim=1)], dim=0) 
-    
-    return mask
-    
 class MultitaskTransformer(nn.Module):
     
     def __init__(self, tokenizer, hdim=256, nhead=2, num_layers=4, dim_feedforward=256, dropout_rate=0.1, output_size=None):
@@ -92,9 +104,11 @@ class MultitaskTransformer(nn.Module):
         self.token_pad_idx = tokenizer.PAD_IDX
         
         self.embedding = nn.Embedding(tokenizer.vocab_size, self.hdim)
-        self.outemb = nn.Embedding(tokenizer.vocab_size, self.hdim)
+        self.outemb = nn.Embedding(tokenizer.vocab_size, self.hdim)        
         self.positional_encoding = PositionalEncoding(self.hdim)
+        
         # self.positional_encoding = LearnedPositionalEncoding(self.hdim)
+        self.embedding_norm = nn.LayerNorm(self.hdim)
         
         encode_args = {"d_model": self.hdim, "nhead": self.nhead, "dim_feedforward": self.dim_feedforward, "dropout": dropout_rate}
         encode_layer = nn.TransformerEncoderLayer(**encode_args, batch_first=True)
@@ -106,6 +120,7 @@ class MultitaskTransformer(nn.Module):
         self.decoder_norm = nn.LayerNorm(self.hdim)
         
         self.classification_layers = nn.Sequential(
+            nn.LayerNorm(self.hdim),
             # nn.Linear(self.hdim, self.dim_feedforward),  # First layer upscales to dim_feedforward
             # nn.LeakyReLU(),  # Nonlinear activation
             # nn.Linear(self.dim_feedforward, self.dim_feedforward // 2),  # Further processing layer
@@ -116,14 +131,17 @@ class MultitaskTransformer(nn.Module):
 
 
     def forward(self, input, teach_forcing):
-        
+        assert input.max() < self.embedding.num_embeddings, f"bad input token index: {input.max().item()}"
+        assert input.min() >= 0, "negative input token index"
+        assert teach_forcing.max() < self.outemb.num_embeddings, f"bad teach_forcing token index: {teach_forcing.max().item()}"
+
         memory_mask = input == self.token_pad_idx
         
-        input_embedding = self.positional_encoding(self.embedding(input))
+        input_embedding = self.positional_encoding(self.embedding_norm(self.embedding(input)))
         input_encoding = self.encoder(input_embedding, src_key_padding_mask=memory_mask)
         
         teach_forcing = self.positional_encoding(self.outemb(teach_forcing))
-        tgt_mask = generate_custom_subsequent_mask(teach_forcing.size(1)).to(input.device)
+        tgt_mask = generate_custom_subsequent_mask(teach_forcing.size(1), device=input.device)
         
         decoded = self.decoder(teach_forcing, input_encoding, tgt_mask=tgt_mask, memory_key_padding_mask=memory_mask)
         decoded = self.decoder_norm(decoded)
@@ -131,15 +149,44 @@ class MultitaskTransformer(nn.Module):
         logits = self.classification_layers(decoded)
         
         return logits
+
+
+    @staticmethod
+    def lossfn(ignore_index=-100, weight_decay=1e-5):
+        ce_lossfn = nn.CrossEntropyLoss(reduction='mean', ignore_index=ignore_index, label_smoothing=0.01)
+
+        def lossfn(parameters, logits, output):
+            loss = ce_lossfn(logits, output)
+            return loss
+
+        return lossfn
     
     @staticmethod
-    def lossfn(ignore_index = -100, weight_decay=1e-5):
-        ce_lossfn = nn.CrossEntropyLoss(reduction='mean', ignore_index=ignore_index, label_smoothing=0.01)
+    def build_eval_lossfn(value_indexes, device):
+        value_token_ids = torch.tensor(list(value_indexes), dtype=torch.long).to(device)
+        ce_lossfn = nn.CrossEntropyLoss(reduction='mean', ignore_index=-100, label_smoothing=0.01)
+
         def lossfn(parameters, logits, output):
-            ce_loss = ce_lossfn(logits, output)
-            # l2 = sum(p.pow(2.0).sum() for p in parameters if p.requires_grad)
-            return ce_loss #+ weight_decay * l2
-        return lossfn   
+            """
+            logits: [B, V, T]
+            output: [B, T]
+            """
+            B, V, T = logits.shape
+            logits = logits.permute(0, 2, 1).contiguous()  # → [B, T, V]
+
+            logits_flat = logits.reshape(-1, V)  # [B*T, V]
+            output_flat = output.reshape(-1)     # [B*T]
+
+            mask = torch.isin(output_flat, value_token_ids)
+            if mask.sum() == 0:
+                return torch.tensor(0.0, device=output.device)
+
+            logits_sel = logits_flat[mask]       # [N, V]
+            output_sel = output_flat[mask]       # [N]
+
+            return ce_lossfn(logits_sel, output_sel)
+
+        return lossfn
     
     @staticmethod
     def focal_lossfn(alpha=0.25, gamma=2.0, ignore_index=-100):
@@ -165,20 +212,6 @@ class MultitaskTransformer(nn.Module):
         
         return lossfn
     
-    # @staticmethod
-    # def lossfn(ignore_index = -100, weight_decay=1e-5):
-    #     ce_lossfn = nn.CrossEntropyLoss(reduction='mean', ignore_index=ignore_index, label_smoothing=0.0125)
-    #     def lossfn(parameters, logits, output):
-    #         sequence_length = output.size(1)
-    #         indices = torch.arange(sequence_length)
-    #         mask = (indices % 2 == 1) & (indices >= 3)  # Starts from index 3 and every second index thereafter
-    #         out_mask = (indices % 2 == 0) & (indices >= 2)  # Starts from index 2 and every second index thereafter
-    #         selected_logits = logits[:, :, mask]
-    #         selected_output = output[:, out_mask]
-    #         ce_loss = ce_lossfn(selected_logits, selected_output)
-    #         return ce_loss
-    #     return lossfn   
-    
     def save(self, path):
         if not isinstance(path, pathlib.Path):
             path = pathlib.Path(path)
@@ -198,65 +231,114 @@ class MultitaskTransformer(nn.Module):
         model.eval()
         return model
 
-class SequenceShiftDataset(torch.utils.data.Dataset):
+# @torch.jit.script
+# def process_assay_vals(
+#     raw_assay_vals: Tensor,
+#     pad_idx: int,
+#     sep_idx: int,
+#     end_idx: int,
+#     nprops: int
+# ) -> Tuple[Tensor, Tensor]:
+#     # Remove pad, strip SOS/EOS
+#     mask = raw_assay_vals != pad_idx
+#     assay_vals = raw_assay_vals[mask][1:-1]
+    
+#     reshaped = assay_vals.view(-1, 2).contiguous()
+#     perm = torch.randperm(reshaped.size(0))
+#     shuffled = reshaped[perm].flatten()
 
+#     av_truncate = shuffled[: nprops * 2]
+#     av_sos_eos = torch.cat([torch.tensor([sep_idx]), av_truncate, torch.tensor([end_idx])])
+#     out = F.pad(av_sos_eos, (0, nprops * 2 + 2 - av_sos_eos.size(0)), value=float(pad_idx))
+#     tch = torch.cat([torch.tensor([1]), out[:-1]])
+#     return tch, out
+
+@torch.jit.script
+def process_assay_vals(raw_assay_vals: Tensor, pad_idx: int, sep_idx: int, end_idx: int, nprops: int) -> Tuple[Tensor, Tensor]:
+    mask = raw_assay_vals != pad_idx
+    assay_vals = raw_assay_vals[mask][1:-1]
+    reshaped = assay_vals.view(-1, 2).contiguous()
+
+    # Safety check
+    assert reshaped.numel() > 0, "No assay values found."
+
+    perm = torch.randperm(reshaped.size(0))
+    shuffled = reshaped[perm].flatten()
+    av_truncate = shuffled[: nprops * 2]
+
+    device = raw_assay_vals.device
+    av_sos_eos = torch.cat([
+        torch.tensor([sep_idx], device=device),
+        av_truncate,
+        torch.tensor([end_idx], device=device)
+    ])
+    pad_value = float(pad_idx)
+    out = F.pad(av_sos_eos, (0, nprops * 2 + 2 - av_sos_eos.size(0)), value=pad_value)
+    tch = torch.cat([torch.tensor([1]), out[:-1]])
+    
+    return tch, out
+
+class SequenceShiftDataset(Dataset):
     def __init__(self, path, tokenizer: SelfiesPropertyValTokenizer, nprops=5, assay_filter=[]):
         self.nprops = nprops
         self.assay_filter = assay_filter
         self.data = []
         self.cumulative_lengths = [0]
         cumulative_length = 0
-        self.tokenizer= tokenizer
+        self.tokenizer = tokenizer
         self.pad_idx, self.sep_idx, self.end_idx = tokenizer.PAD_IDX, tokenizer.SEP_IDX, tokenizer.END_IDX
-        
 
-        # file_path = next(pathlib.Path(path).glob("*.pt"))
         for file_path in tqdm.tqdm(pathlib.Path(path).glob("*.pt")):
-            file_data = torch.load(file_path)
-            
-            # num_props = file_data['assay_vals'].size(1)
-            # assay_vals = file_data['assay_vals'][num_props > 9]
-            self.data.extend([(file_data['selfies'], file_data['assay_vals'])])
-            cumulative_length += file_data['selfies'].size(0)
+            file_data = torch.load(file_path, map_location="cpu")
+            self.data.append((file_data["selfies"], file_data["assay_vals"]))
+            cumulative_length += file_data["selfies"].size(0)
             self.cumulative_lengths.append(cumulative_length)
 
     def __len__(self):
         return self.cumulative_lengths[-1] if self.cumulative_lengths else 0
 
     def __getitem__(self, idx):
-        
-        # Find which section this index falls into and update the index to be relative to that section
-        file_idx = next(i for i, total_length in enumerate(self.cumulative_lengths) if total_length > idx) - 1
-        idx -= self.cumulative_lengths[file_idx]
-        
-        idxdata = self.data[file_idx]
-        selfies_raw, raw_assay_vals = idxdata[0][idx], idxdata[1][idx]
-        
-        return self.selfies_and_assay_vals_to_tensor(selfies_raw, raw_assay_vals)
-    
-    def selfies_and_assay_vals_to_tensor(self, selfies_raw, raw_assay_vals):
-        assay_vals = raw_assay_vals[raw_assay_vals != self.pad_idx][1:-1]
-        reshaped_av = assay_vals.reshape(assay_vals.size(0) // 2, 2)
-        av_shuffled = reshaped_av[torch.randperm(reshaped_av.size(0)),:].reshape(assay_vals.size(0))
-        
-        # truncate to n_features random features
-        n_features = self.nprops
-        av_truncate = av_shuffled[0:(n_features*2)]
-        
-        # add start and end tokends and pad to 120 length
-        av_sos_eos = torch.cat([torch.LongTensor([self.sep_idx]), av_truncate, torch.LongTensor([self.end_idx])])
-        
-        # add padding up to n_features*2+2
-        out = F.pad(av_sos_eos, (0, (n_features*2+2) - av_sos_eos.size(0)), value=self.pad_idx)
+        file_idx = bisect.bisect_right(self.cumulative_lengths, idx) - 1
+        local_idx = idx - self.cumulative_lengths[file_idx]
 
-        # out = torch.hstack([av_truncate,torch.tensor([self.pad_idx])])
-        tch = torch.hstack([torch.tensor([1]),out[:-1]])
-        
-        # inp = selfies_raw # F.pad(selfies, (0, 119 - selfies.size(0)), value=self.pad_idx)
-        # inp = torch.hstack([selfies, torch.tensor([self.sep_idx]), av_shuffled[2:4]])
-        inp = selfies_raw
+        selfies_raw = self.data[file_idx][0][local_idx]
+        raw_assay_vals = self.data[file_idx][1][local_idx]
 
-        return inp, tch, out
+        tch, out = process_assay_vals(
+            raw_assay_vals,
+            self.pad_idx,
+            self.sep_idx,
+            self.end_idx,
+            self.nprops
+        )
+
+        return selfies_raw, tch, out
+
+class FastPackedSequenceShiftDataset(Dataset):
+
+    def __init__(self, path_prefix):
+        meta = json.load(open(f"{path_prefix}_meta.json"))
+        def load_tensor(name):
+            shape = tuple(meta[name]["shape"])
+            dtype = getattr(torch, meta[name]["dtype"].split('.')[-1])  # e.g. "torch.int64" → torch.int64
+            numel = int(np.prod(shape))
+            return torch.from_file(
+                filename=f"{path_prefix}_{name}.dat",
+                shared=False,
+                size=numel,
+                dtype=dtype
+            ).view(shape)
+
+
+        self.selfies = load_tensor("selfies")
+        self.tch = load_tensor("tch")
+        self.out = load_tensor("out")
+
+    def __len__(self):
+        return self.selfies.size(0)
+
+    def __getitem__(self, idx):
+        return self.selfies[idx], self.tch[idx], self.out[idx]
 
 class LabelSmoothingCrossEntropySequence(nn.Module):
     def __init__(self, epsilon_ls=0.1, ignore_index=None):

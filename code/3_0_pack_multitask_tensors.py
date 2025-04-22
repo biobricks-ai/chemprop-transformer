@@ -1,11 +1,30 @@
 import pathlib
 import torch
+import numpy as np
+import json
 import tqdm
 import logging
+import multiprocessing as mp
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from cvae.models.multitask_transformer import process_assay_vals
 from cvae.tokenizer.selfies_property_val_tokenizer import SelfiesPropertyValTokenizer
 import cvae.tokenizer
+
+# Set up logging
+outdir = pathlib.Path("cache/pack_multitask_tensors")
+outdir.mkdir(exist_ok=True, parents=True)
+
+log_dir = outdir / "logs"
+log_dir.mkdir(exist_ok=True)
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(log_dir / "log.txt"),
+        logging.StreamHandler()
+    ]
+)
 
 def process_file(file_path, pad_idx, sep_idx, end_idx, nprops, epochs):
     file_data = torch.load(file_path, map_location="cpu", weights_only=False)
@@ -24,95 +43,77 @@ def process_file(file_path, pad_idx, sep_idx, end_idx, nprops, epochs):
             selfies_out.append(selfies[i])
 
     return (
-        torch.stack(selfies_out),
-        torch.stack(tch_out),
-        torch.stack(out_out),
+        torch.stack(selfies_out),  # [M, seq_len]
+        torch.stack(tch_out),      # [M, prop_len]
+        torch.stack(out_out),      # [M, prop_len]
     )
 
 def pack_dataset(split_dir: pathlib.Path, out_path: pathlib.Path, tokenizer, nprops: int, epochs: int):
-    logging.info(f"Starting to pack dataset from {split_dir}")
-    logging.info(f"Output will be saved to {out_path}")
-    logging.info(f"Using {nprops} properties and {epochs} epochs")
-
+    logging.info(f"Packing dataset from {split_dir} → {out_path.stem}")
     pad_idx, sep_idx, end_idx = tokenizer.PAD_IDX, tokenizer.SEP_IDX, tokenizer.END_IDX
     file_paths = sorted(split_dir.glob("*.pt"))
-    logging.info(f"Found {len(file_paths)} files to process")
+    logging.info(f"Found {len(file_paths)} files")
 
-    selfies_all = []
-    tch_all = []
-    out_all = []
+    selfies_list, tch_list, out_list = [], [], []
 
-    with ProcessPoolExecutor() as executor:
+    # Set multiprocessing start method to 'spawn' to avoid deadlocks
+    mp.set_start_method('spawn', force=True)
+
+    with ProcessPoolExecutor(mp_context=mp.get_context('spawn')) as executor:
         futures = {
-            executor.submit(
-                process_file,
-                file_path,
-                pad_idx,
-                sep_idx,
-                end_idx,
-                nprops,
-                epochs
-            ): file_path.name
-            for file_path in file_paths
+            executor.submit(process_file, fp, pad_idx, sep_idx, end_idx, nprops, epochs): fp.name
+            for fp in file_paths
         }
-
         with tqdm.tqdm(total=len(futures), desc=f"Packing {split_dir.name}") as pbar:
-            for future in as_completed(futures):
-                file_name = futures[future]
+            for fut in as_completed(futures):
+                name = futures[fut]
                 try:
-                    s, t, o = future.result()
-                    selfies_all.append(s)
-                    tch_all.append(t)
-                    out_all.append(o)
+                    s, t, o = fut.result()
+                    selfies_list.append(s)
+                    tch_list.append(t)
+                    out_list.append(o)
                 except Exception as e:
-                    logging.error(f"Error processing file {file_name}: {e}")
+                    logging.error(f"[{name}] {e}")
                 pbar.update(1)
 
-    selfies_all = torch.cat(selfies_all, dim=0)
-    tch_all = torch.cat(tch_all, dim=0)
-    out_all = torch.cat(out_all, dim=0)
+    # concatenate once
+    selfies_all = torch.cat(selfies_list, dim=0)
+    tch_all     = torch.cat(tch_list,     dim=0)
+    out_all     = torch.cat(out_list,     dim=0)
 
-    logging.info(f"Final tensor shapes:")
-    logging.info(f"  selfies: {selfies_all.shape}")
-    logging.info(f"  tch: {tch_all.shape}")
-    logging.info(f"  out: {out_all.shape}")
+    logging.info(f"Final shapes: selfies={selfies_all.shape}, tch={tch_all.shape}, out={out_all.shape}")
 
-    torch.save({
-        "selfies": selfies_all,
-        "tch": tch_all,
-        "out": out_all
-    }, out_path)
+    # convert to numpy and dump raw .dat
+    prefix = str(out_path.with_suffix(""))
+    selfies_all.cpu().numpy().tofile(f"{prefix}_selfies.dat")
+    tch_all.cpu().numpy().tofile(    f"{prefix}_tch.dat")
+    out_all.cpu().numpy().tofile(    f"{prefix}_out.dat")
 
-    logging.info(f"Successfully saved {split_dir.name} to {out_path}")
-    logging.info(f"Total records: {len(selfies_all)} ({len(selfies_all)//epochs} unique × {epochs} epochs)")
+    # write meta.json with shapes and dtypes
+    meta = {
+        "selfies": {"shape": tuple(selfies_all.shape), "dtype": str(selfies_all.dtype)},
+        "tch":     {"shape": tuple(tch_all.shape),     "dtype": str(tch_all.dtype)},
+        "out":     {"shape": tuple(out_all.shape),     "dtype": str(out_all.dtype)},
+    }
+    with open(f"{prefix}_meta.json", "w") as f:
+        json.dump(meta, f)
 
+    logging.info(f"Dumped .dat + meta.json for split {split_dir.name}")
 
 if __name__ == "__main__":
-    # Set up logging
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(levelname)s - %(message)s',
-        handlers=[
-            logging.StreamHandler(),
-            logging.FileHandler('pack_multitask_tensors.log')
-        ]
-    )
+    indir   = pathlib.Path("cache/build_tensordataset/multitask_tensors")
+    nprops  = 20
+    epochs  = 2
 
-    indir = pathlib.Path("cache/build_tensordataset/multitask_tensors")
-    outdir = pathlib.Path("cache/pack_multitask_tensors")
-    outdir.mkdir(parents=True, exist_ok=True)
-    nprops = 20
-    epochs = 100
+    logging.info("Starting tensor packing")
+    logging.info(f"Input:  {indir}")
+    logging.info(f"Output: {outdir}")
 
-    logging.info("Starting tensor packing process")
-    logging.info(f"Input directory: {indir}")
-    logging.info(f"Output directory: {outdir}")
-
-    tokenizer = cvae.tokenizer.SelfiesPropertyValTokenizer.load('brick/selfies_property_val_tokenizer')
-    logging.info("Loaded tokenizer successfully")
+    tokenizer = SelfiesPropertyValTokenizer.load('brick/selfies_property_val_tokenizer')
+    logging.info("Loaded tokenizer")
 
     for split in ["trn", "tst", "hld"]:
-        logging.info(f"\nProcessing {split} split")
+        logging.info(f"→ {split}")
         split_dir = indir / split
-        out_path = outdir / f"packed_{split}.pt"
-        pack_dataset(split_dir, out_path, tokenizer, nprops, epochs)
+        out_pt    = outdir / f"packed_{split}.pt"  # used only for naming
+        pack_dataset(split_dir, out_pt, tokenizer, nprops, epochs)
