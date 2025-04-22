@@ -111,7 +111,7 @@ class Trainer():
         self.max_epochs = max_epochs
 
         # Add gradient accumulation for effectively larger batch sizes
-        self.gradient_accumulation_steps = 8
+        self.gradient_accumulation_steps = 1
         effective_batch_size = batch_size * torch.cuda.device_count() * self.gradient_accumulation_steps  # 16 * 8 * 8
         base_lr = 1e-5
         warmup_steps = 200  # Can be tuned
@@ -132,7 +132,7 @@ class Trainer():
         )
 
         # linear_scheduler = LinearLR(self.optimizer, start_factor=0.1, total_iters=warmup_steps)
-        self.scheduler = ReduceLROnPlateau(self.optimizer, mode='min', factor=0.5, patience=5, verbose=True)
+        self.scheduler = ReduceLROnPlateau(self.optimizer, mode='min', factor=0.5, patience=3, verbose=True)
         # self.scheduler = linear_scheduler  # Use only linear warmup, handle plateau separately
         # self.plateau_scheduler = plateau  # Store plateau scheduler to call separately
         # self.scheduler = SequentialLR(
@@ -158,7 +158,7 @@ class Trainer():
         
         # Reduce evaluation frequency
         self.eval_every = 100
-        self.eval_samples = 1000
+        self.eval_samples = 40
     
     def log(self, msg):
         if self.rank==0:
@@ -189,6 +189,111 @@ class Trainer():
                     f.write("type\tbatch\tloss\tlr\n")
         return self
 
+    def _train_batch(self, inp, teach, out):
+        # Only zero gradients at the beginning of accumulation cycle
+        if self.global_step % self.gradient_accumulation_steps == 0:
+            self.optimizer.zero_grad()
+            
+        inp, teach, out = inp.to(self.rank), teach.to(self.rank), out.to(self.rank)
+
+        with autocast(device_type='cuda', dtype=torch.float16):
+            pred = self.model(inp, teach) # [batch_size, seq_len, vocab_size]
+            pred = pred.permute(0, 2, 1).contiguous()
+            loss = self.lossfn(self.model.module.parameters(), pred, out)
+            # Scale loss for gradient accumulation
+            loss = loss / self.gradient_accumulation_steps
+
+        # Scale gradients and accumulate
+        self.scaler.scale(loss).backward()
+        
+        # Only update weights at the end of accumulation cycle
+        if (self.global_step + 1) % self.gradient_accumulation_steps == 0:
+            self.scaler.unscale_(self.optimizer)
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
+        
+        self.global_step += 1
+        return loss.detach().item() * self.gradient_accumulation_steps
+
+    def _eval_all(self, max_eval_batches=None):
+        max_eval_batches = self.eval_samples if max_eval_batches is None else max_eval_batches
+        
+        self.model.eval()
+        total_loss = 0.0
+        num_samples = 0
+        
+        all_preds = []
+        all_targets = []
+        value_token_ids = set(self.tokenizer.value_indexes().values())
+        
+        dist.barrier()
+        for i, (inp, teach, out) in enumerate(self.valdl):
+            if max_eval_batches is not None and i >= max_eval_batches:
+                break
+                
+            inp, teach, out = inp.to(self.rank), teach.to(self.rank), out.to(self.rank)
+            with torch.no_grad():
+                with autocast(device_type='cuda', dtype=torch.float16):
+                    pred = self.model(inp, teach)
+                    pred = pred.permute(0, 2, 1).contiguous()
+                    loss = self.eval_loss(self.model.module.parameters(), pred, out)
+                
+                # Get predictions and targets for metrics
+                pred_probs = F.softmax(pred, dim=1)
+                pred_labels = pred.argmax(dim=1)
+                
+                # Create mask for value tokens
+                mask = torch.isin(out, torch.tensor(list(value_token_ids), device=out.device))
+                
+                # Collect predictions and targets for value tokens
+                all_preds.append(pred_probs[mask])
+                all_targets.append(out[mask])
+                
+                total_loss += loss.item() * inp.size(0)
+                num_samples += inp.size(0)
+        
+        # Aggregate loss across ranks
+        total_loss_tensor = torch.tensor(total_loss, device=self.rank)
+        num_samples_tensor = torch.tensor(num_samples, device=self.rank)
+        dist.all_reduce(total_loss_tensor, op=dist.ReduceOp.SUM)
+        dist.all_reduce(num_samples_tensor, op=dist.ReduceOp.SUM)
+        
+        mean_loss = total_loss_tensor.item() / num_samples_tensor.item() if num_samples_tensor.item() != 0 else 0.0
+        
+        # Calculate metrics if we have predictions
+        if len(all_preds) > 0:
+            all_preds = torch.cat(all_preds, dim=0)
+            all_targets = torch.cat(all_targets, dim=0)
+            
+            # Limit tokens per rank
+            max_tokens = 5000
+            if all_preds.size(0) > max_tokens:
+                all_preds = all_preds[:max_tokens]
+                all_targets = all_targets[:max_tokens]
+            
+            # Gather from all ranks
+            gathered_preds = [torch.zeros_like(all_preds) for _ in range(dist.get_world_size())]
+            gathered_targets = [torch.zeros_like(all_targets) for _ in range(dist.get_world_size())]
+            dist.all_gather(gathered_preds, all_preds)
+            dist.all_gather(gathered_targets, all_targets)
+            
+            # Combine gathered tensors
+            all_preds = torch.cat(gathered_preds, dim=0)
+            all_targets = torch.cat(gathered_targets, dim=0)
+            
+            # Calculate AUC and BAC
+            from sklearn.metrics import roc_auc_score, balanced_accuracy_score
+            auc = roc_auc_score(all_targets.cpu().numpy(), all_preds.cpu().numpy(), multi_class='ovr')
+            bac = balanced_accuracy_score(all_targets.cpu().numpy(), all_preds.argmax(dim=1).cpu().numpy())
+            
+            return {
+                'loss': mean_loss,
+                'auc': auc,
+                'bac': bac
+            }
+            
+        return mean_loss, 0.0, 0.0
     def _evaluation_loss(self, max_eval_batches=None):
         
         max_eval_batches = self.eval_samples if max_eval_batches is None else max_eval_batches
@@ -224,35 +329,7 @@ class Trainer():
         else:
             mean_loss = 0.
         return mean_loss
-
-    def _train_batch(self, inp, teach, out):
-        # Only zero gradients at the beginning of accumulation cycle
-        if self.global_step % self.gradient_accumulation_steps == 0:
-            self.optimizer.zero_grad()
-            
-        inp, teach, out = inp.to(self.rank), teach.to(self.rank), out.to(self.rank)
-
-        with autocast(device_type='cuda', dtype=torch.float16):
-            pred = self.model(inp, teach) # [batch_size, seq_len, vocab_size]
-            pred = pred.permute(0, 2, 1).contiguous()
-            loss = self.lossfn(self.model.module.parameters(), pred, out)
-            # Scale loss for gradient accumulation
-            loss = loss / self.gradient_accumulation_steps
-
-        # Scale gradients and accumulate
-        self.scaler.scale(loss).backward()
         
-        # Only update weights at the end of accumulation cycle
-        if (self.global_step + 1) % self.gradient_accumulation_steps == 0:
-            self.scaler.unscale_(self.optimizer)
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
-            self.scaler.step(self.optimizer)
-            self.scaler.update()
-            self.scheduler.step(loss.detach().item())
-        
-        self.global_step += 1
-        return loss.detach().item() * self.gradient_accumulation_steps
-    
     def _evaluate_balanced_accuracy(self, max_eval_batches=None):
         
         max_eval_batches = self.eval_samples if max_eval_batches is None else max_eval_batches
@@ -325,7 +402,6 @@ class Trainer():
                 logging.warning(f"Balanced accuracy evaluation failed: {e}")
             return -1.0
 
-
     def start(self):
         
         # Initialize accumulated loss
@@ -351,8 +427,11 @@ class Trainer():
                     
                     self.model.eval()  # Switch to eval mode
                     with torch.no_grad():  # Prevent gradient computation during eval
-                        eval_loss = self._evaluation_loss()
-                        bac = self._evaluate_balanced_accuracy()
+                        # eval_loss = self._evaluation_loss()
+                        # bac = self._evaluate_balanced_accuracy()
+                        evals = self._eval_all()
+                        eval_loss, auc, bac = evals['loss'], evals['auc'], evals['bac']
+                        self.scheduler.step(eval_loss)
                     
                     if self.rank == 0:
                         if eval_loss < self.best_loss:
@@ -368,8 +447,8 @@ class Trainer():
                         with open(self.metrics_path, 'a') as f:
                             f.write(f"eval\t{i}\t{eval_loss:.4f}\t{self.optimizer.param_groups[0]['lr']}\n")
                             logging.info(f"Epoch: {epoch}, Step: {i}, Train Loss: {loss:.4f}, "
-                                f"Eval Loss: {eval_loss:.4f}, LR: {self.optimizer.param_groups[0]['lr']}, "
-                                f"BAC: {bac:.4f}")
+                                f"Eval Loss: {eval_loss:.4f},BAC: {bac:.4f}, AUC: {auc:.4f}, "
+                                f"LR: {self.optimizer.param_groups[0]['lr']:.5f}")
                     
                     self.model.train()  # Switch back to training mode
                     dist.barrier()  # Ensure all processes are synced before continuing
@@ -390,15 +469,7 @@ def main(rank, world_size):
 
     # Load model
     
-    # Main: 0.2348, Balance: 0.7670, Diversity: 0.0000, Total loss: 1.0018
-    # v1 model = me.MoE(tokenizer, num_experts=32, hdim=32*8, dim_feedforward=32*8, nhead=4, balance_loss_weight=.1, expert_layers=6)
-    
-    # updated diversity loss
-    # use top-1 expert hard gating
-    # reduce num experts, increase expert size
-    # v3 model = me.MoE(tokenizer, num_experts=8, hdim=512, dim_feedforward=2048, nhead=8, balance_loss_weight=.1, expert_layers=8)
-    # model = me.MoE(tokenizer, num_experts=8, hdim=512, dim_feedforward=2048, nhead=8, balance_loss_weight=.1, expert_layers=8)
-    
+    # .3636 eval loss and .81 BAC
     # v4 model = me.MoE(tokenizer, num_experts=8, hdim=512, dim_feedforward=2048, nhead=8, balance_loss_weight=.1, expert_layers=8)
     # model = me.MoE(tokenizer, num_experts=16, hdim=512, dim_feedforward=2048, nhead=8, balance_loss_weight=0.1, expert_layers=8)
 
