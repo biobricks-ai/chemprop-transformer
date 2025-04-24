@@ -121,11 +121,8 @@ class MultitaskTransformer(nn.Module):
         
         self.classification_layers = nn.Sequential(
             nn.LayerNorm(self.hdim),
-            # nn.Linear(self.hdim, self.dim_feedforward),  # First layer upscales to dim_feedforward
-            # nn.LeakyReLU(),  # Nonlinear activation
-            # nn.Linear(self.dim_feedforward, self.dim_feedforward // 2),  # Further processing layer
-            # nn.LeakyReLU(),  # Nonlinear activation
-            # nn.Linear(self.dim_feedforward // 2, self.output_size)  # Final layer to match output size
+            nn.Linear(self.hdim, self.hdim),
+            nn.ReLU(),
             nn.Linear(self.hdim, self.output_size)
         )
 
@@ -188,30 +185,6 @@ class MultitaskTransformer(nn.Module):
 
         return lossfn
     
-    @staticmethod
-    def focal_lossfn(alpha=0.25, gamma=2.0, ignore_index=-100):
-        def lossfn(parameters, logits, output):
-            # Compute cross-entropy loss without reduction
-            ce_loss = F.cross_entropy(logits, output, reduction='none', ignore_index=ignore_index)
-            
-            # Create mask to ignore the ignore_index
-            valid_mask = (output != ignore_index).float()
-            
-            # Apply valid mask to ce_loss
-            ce_loss = ce_loss * valid_mask
-            
-            # Compute focal loss components
-            pt = torch.exp(-ce_loss)
-            focal_loss = alpha * (1 - pt) ** gamma * ce_loss
-            
-            # Apply valid mask to focal_loss
-            focal_loss = focal_loss * valid_mask
-            
-            # Return the mean focal loss
-            return focal_loss.sum() / valid_mask.sum()
-        
-        return lossfn
-    
     def save(self, path):
         if not isinstance(path, pathlib.Path):
             path = pathlib.Path(path)
@@ -231,27 +204,6 @@ class MultitaskTransformer(nn.Module):
         model.eval()
         return model
 
-# @torch.jit.script
-# def process_assay_vals(
-#     raw_assay_vals: Tensor,
-#     pad_idx: int,
-#     sep_idx: int,
-#     end_idx: int,
-#     nprops: int
-# ) -> Tuple[Tensor, Tensor]:
-#     # Remove pad, strip SOS/EOS
-#     mask = raw_assay_vals != pad_idx
-#     assay_vals = raw_assay_vals[mask][1:-1]
-    
-#     reshaped = assay_vals.view(-1, 2).contiguous()
-#     perm = torch.randperm(reshaped.size(0))
-#     shuffled = reshaped[perm].flatten()
-
-#     av_truncate = shuffled[: nprops * 2]
-#     av_sos_eos = torch.cat([torch.tensor([sep_idx]), av_truncate, torch.tensor([end_idx])])
-#     out = F.pad(av_sos_eos, (0, nprops * 2 + 2 - av_sos_eos.size(0)), value=float(pad_idx))
-#     tch = torch.cat([torch.tensor([1]), out[:-1]])
-#     return tch, out
 
 @torch.jit.script
 def process_assay_vals(raw_assay_vals: Tensor, pad_idx: int, sep_idx: int, end_idx: int, nprops: int) -> Tuple[Tensor, Tensor]:

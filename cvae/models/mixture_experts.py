@@ -6,7 +6,7 @@ import json
 
 class MoE(nn.Module):
 
-    def __init__(self, tokenizer, num_experts=2, hdim=32, nhead=8, dim_feedforward=32, noise_factor=.1, 
+    def __init__(self, tokenizer, num_experts=2, k=2, hdim=32, nhead=8, dim_feedforward=32, noise_factor=.1, 
                  dropout_rate=.1, balance_loss_weight=1.0, diversity_loss_weight=0.1, expert_layers=4):
         super().__init__()
         self.tokenizer: SelfiesPropertyValTokenizer = tokenizer
@@ -24,6 +24,7 @@ class MoE(nn.Module):
         self.dropout_rate = dropout_rate
         self.current_train_step = 0
         self.num_experts = num_experts
+        self.k = k
 
     def compute_gating_distribution(self, input, teach_forcing, expert_mask=None):
         gating_scores = self.gating_network(input, teach_forcing)
@@ -93,6 +94,7 @@ class MoE(nn.Module):
         return self.diversity_loss_weight * diversity_loss
 
     def forward(self, input, teach_forcing=None):
+        
         B, T = input.shape
         E = self.num_experts
         V = self.tokenizer.vocab_size
@@ -115,7 +117,7 @@ class MoE(nn.Module):
             gating_scores = gating_scores + gumbel_noise * self.noise_factor
 
         # Get top-2 experts: indices and values
-        topk_values, topk_indices = torch.topk(gating_scores, k=2, dim=-1)  # [B, T, 2]
+        topk_values, topk_indices = torch.topk(gating_scores, k=self.k, dim=-1)  # [B, T, 2]
 
         # Softmax over top-k only
         topk_weights = F.softmax(topk_values, dim=-1)  # [B, T, 2]
@@ -130,12 +132,12 @@ class MoE(nn.Module):
         output = (stacked_outputs * routing_weights.unsqueeze(2)).sum(dim=-1)  # [B, T, V]
 
         # Auxiliary losses
-        self.balance_loss = self.compute_balance_loss(soft_distribution)
-        self.diversity_loss = self.compute_diversity_loss(expert_outputs)
+        if self.training:
+            self.balance_loss = self.compute_balance_loss(soft_distribution)
+            self.diversity_loss = self.compute_diversity_loss(expert_outputs)
 
         return output
-
-
+    
     def build_lossfn(self):
         ignore_index = self.tokenizer.pad_idx
         ce_lossfn = torch.nn.CrossEntropyLoss(reduction='mean', ignore_index=ignore_index)
@@ -151,7 +153,10 @@ class MoE(nn.Module):
         ce_lossfn = mt.MultitaskTransformer.build_eval_lossfn(value_indexes=self.tokenizer.value_indexes().values(), device=device)
 
         def lossfn(parameters, logits, output):
-            return ce_lossfn(parameters,logits, output) + self.balance_loss + self.diversity_loss
+            val_logits = logits[:, :, self.tokenizer.value_indexes().values()]
+            val_output = torch.zeros_like(output[:, :, self.tokenizer.value_indexes().values()]).long()
+            val_output[output[:, :, self.tokenizer.value_indexes().values()] > 0] = 1
+            return ce_lossfn(parameters, val_logits, val_output) + self.balance_loss + self.diversity_loss
 
         return lossfn
 
@@ -173,7 +178,8 @@ class MoE(nn.Module):
             "dropout_rate": self.dropout_rate,
             "balance_loss_weight": self.balance_loss_weight,
             "diversity_loss_weight": self.diversity_loss_weight,
-            "expert_layers": len(self.experts[0].encoder.layers)
+            "expert_layers": len(self.experts[0].encoder.layers),
+            "k": self.k
         }
         with open(path / "config.json", "w") as f:
             json.dump(config, f, indent=2)
