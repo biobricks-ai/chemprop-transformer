@@ -17,6 +17,9 @@ from cvae.tokenizer import SelfiesPropertyValTokenizer
 
 import glob
 import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
+import pyarrow.dataset as ds
 
 # Setup output directories
 outdir = pathlib.Path("cache/generate_evaluations")
@@ -25,10 +28,6 @@ outdir.mkdir(exist_ok=True, parents=True)
 tmpdir = outdir / "temp"
 tmpdir.mkdir(exist_ok=True, parents=True)
 [f.unlink() for f in tmpdir.glob('*')]
-
-metdir = outdir / "metrics"
-metdir.mkdir(exist_ok=True, parents=True)
-[f.unlink() for f in metdir.glob('*')]
 
 logdir = outdir / "logs"
 logdir.mkdir(exist_ok=True, parents=True)
@@ -43,6 +42,7 @@ def log(msg, rank):
 
 nprops = 5
 batch_size = 5
+repetitions = 20
 perm_indices = list(itertools.permutations(range(nprops)))
 perm_count = len(perm_indices)
 
@@ -130,34 +130,56 @@ def main_worker():
     seen_inputs = set()
     batch_accum = []
 
-    testloader = enumerate(dataloader)
-    i, (raw_inp, _, raw_out) = next(testloader)
-    for i, (raw_inp, _, raw_out) in tqdm.tqdm(enumerate(dataloader), total=len(dataloader)):
-        log(f"Processing batch {i} out of {len(dataloader)}", 0)
-        batch_tuples = tuple(map(lambda x, y: (tuple(x.tolist()), tuple(y.tolist())), raw_inp, raw_out))
-        new_inputs_mask = [t not in seen_inputs for t in batch_tuples]
-        seen_inputs.update(batch_tuples)
-        if any(new_inputs_mask):
-            new_raw_inp = raw_inp[new_inputs_mask]
-            new_raw_out = raw_out[new_inputs_mask]
-            # i, raw_inp, raw_out, model, tokenizer, device = 0, new_raw_inp, new_raw_out, model, tokenizer, device
-            batch_df = run_eval(i, new_raw_inp, new_raw_out, model, tokenizer, device)
-            if not batch_df.empty:
-                batch_accum.append(batch_df)
-        if len(batch_accum) > 0 and sum(len(df) for df in batch_accum) > 1_000_000:
-            log(f"Saving batch accumulation at step {i}", rank)
-            pd.concat(batch_accum).to_parquet(tmpdir / f"multitask_predictions_{uuid.uuid4()}.parquet", index=False)
-            batch_accum = []
+    for repeat in range(repetitions):
+        log(f"Starting repeat {repeat}", rank)
+        for i, (raw_inp, _, raw_out) in tqdm.tqdm(enumerate(dataloader), total=len(dataloader)):
+            log(f"Processing batch {i} out of {len(dataloader)}", rank)
+            batch_tuples = tuple(map(lambda x, y: (tuple(x.tolist()), tuple(y.tolist())), raw_inp, raw_out))
+            new_inputs_mask = [t not in seen_inputs for t in batch_tuples]
+            seen_inputs.update(batch_tuples)
+            if any(new_inputs_mask):
+                new_raw_inp = raw_inp[new_inputs_mask]
+                new_raw_out = raw_out[new_inputs_mask]
+                batch_df = run_eval(i, new_raw_inp, new_raw_out, model, tokenizer, device)
+                if not batch_df.empty:
+                    batch_accum.append(batch_df)
+            if len(batch_accum) > 0 and sum(len(df) for df in batch_accum) > 1_000_000:
+                log(f"Saving batch accumulation at step {i}", rank)
+                pd.concat(batch_accum).to_parquet(tmpdir / f"multitask_predictions_{uuid.uuid4()}.parquet", index=False)
+                batch_accum = []
 
-    if batch_accum:
-        log("Saving final batch accumulation", rank)
-        pd.concat(batch_accum).to_parquet(tmpdir / f"multitask_predictions_{uuid.uuid4()}.parquet", index=False)
+        if batch_accum:
+            log("Saving final batch accumulation", rank)
+            pd.concat(batch_accum).to_parquet(tmpdir / f"multitask_predictions_{uuid.uuid4()}.parquet", index=False)
 
     cleanup()
 
 
 if __name__ == "__main__":
     main_worker()
-    parquet_files = glob.glob(str(tmpdir / "*.parquet"))
-    df = pd.concat([pd.read_parquet(file) for file in parquet_files])
-    df.to_parquet(outdir / "multitask_predictions.parquet", index=False, engine="pyarrow", compression="zstd", compression_level=9)
+    if int(os.environ["RANK"]) == 0:
+        log("Concatenating parquet files", 0)
+        parquet_files = glob.glob(str(tmpdir / "*.parquet"))
+        df = pd.concat([pd.read_parquet(file) for file in parquet_files])
+        df.to_parquet(outdir / "multitask_predictions_single_files.parquet", index=False, engine="pyarrow", compression="zstd", compression_level=9)
+
+        table = pq.read_table(outdir / "multitask_predictions_single_files.parquet")
+        ds.write_dataset(
+            data=table,
+            base_dir=outdir / "multitask_predictions.parquet",
+            format="parquet",
+            file_options=ds.ParquetFileFormat().make_write_options(
+                compression="zstd",
+                compression_level=9
+            ),
+            max_rows_per_file=25_000_000,
+            existing_data_behavior="overwrite_or_ignore",
+            basename_template="part-{i}.parquet",
+        )
+
+        # TEST READ
+        df = pd.read_parquet(outdir / "multitask_predictions.parquet")
+        
+        # generate and print AUC by nprop
+        import sklearn.metrics
+        df.groupby('nprops').apply(lambda x: sklearn.metrics.roc_auc_score(x['value'], x['probs']))

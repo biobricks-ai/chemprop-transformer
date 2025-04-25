@@ -480,7 +480,7 @@ def main(rank, world_size):
     # model = me.MoE(tokenizer, num_experts=16, hdim=512, dim_feedforward=2048, nhead=8, balance_loss_weight=0.1, expert_layers=8)
 
     # v5 model goes smaller and faster.
-    # model = me.MoE(tokenizer, num_experts=64, k=8, hdim=64, dim_feedforward=128, nhead=2, balance_loss_weight=0.1, expert_layers=3)
+    # model = me.MoE(tokenizer, num_experts=64, k=2, hdim=64, dim_feedforward=128, nhead=2, balance_loss_weight=0.1, expert_layers=3)
 
     model = me.MoE.load(outdir / "moe")
     # model.balance_loss_weight = 1.0
