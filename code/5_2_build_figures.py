@@ -5,7 +5,7 @@ import random
 df = pd.read_parquet('cache/eval_multi_properties/multitask_metrics.parquet')
 df.aggregate({'AUC': 'median', 'ACC': 'median', 'BAC': 'median', "cross_entropy_loss": 'median'})
 df.groupby('nprops').aggregate({'AUC': 'median', 'ACC': 'median', 'BAC': 'median', "cross_entropy_loss": 'median', 'assay': 'nunique'})
-df[df['NUM_POS'] > 100].groupby('nprops').aggregate({'AUC': 'median', 'ACC': 'median', 'BAC': 'median', "cross_entropy_loss": 'median', 'assay': 'nunique'})
+df[(df['NUM_POS'] > 1000) & (df['NUM_NEG'] > 1000)].groupby('nprops').aggregate({'AUC': 'median', 'ACC': 'median', 'BAC': 'median', "cross_entropy_loss": 'median', 'assay': 'nunique'})
 
 # how many assays?
 df['assay'].nunique()

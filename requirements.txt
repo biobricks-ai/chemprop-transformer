@@ -1,0 +1,41 @@
+# Deep Learning Framework
+torch
+torchvision
+torchaudio
+pytorch-cuda==11.7
+
+# Data Science & ML Libraries
+numpy
+pandas
+scikit-learn
+scipy
+matplotlib
+seaborn
+faiss-gpu
+tqdm
+dvc
+
+# Chemistry Libraries
+rdkit
+selfies==2.1.1
+
+# Big Data Processing
+pyspark==3.5.0
+dask
+dask[distributed]
+
+# Web & API
+flask
+gunicorn
+psycopg
+reportlab
+
+# Cloud & Storage
+boto3
+pyarrow
+
+# ML Optimizers
+lion-pytorch
+
+# Utilities
+biobricks

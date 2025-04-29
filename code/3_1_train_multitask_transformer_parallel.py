@@ -105,6 +105,7 @@ class Trainer():
         self.global_step = 0
         self.trn_iterator = trn_iterator
         self.tokenizer = tokenizer
+        self.log(f"Initializing model")
 
         # init model
         firstbatch = next(iter(trn_iterator))
@@ -139,7 +140,7 @@ class Trainer():
         )
 
         # linear_scheduler = LinearLR(self.optimizer, start_factor=0.1, total_iters=warmup_steps)
-        self.scheduler = ReduceLROnPlateau(self.optimizer, mode='min', factor=0.5, patience=3, verbose=True)
+        self.scheduler = ReduceLROnPlateau(self.optimizer, mode='min', factor=0.5, patience=3)
         # self.scheduler = linear_scheduler  # Use only linear warmup, handle plateau separately
         # self.plateau_scheduler = plateau  # Store plateau scheduler to call separately
         # self.scheduler = SequentialLR(
@@ -151,15 +152,15 @@ class Trainer():
         #     milestones=[warmup_steps]
         # )
 
-        # self.lossfn = self.model.module.build_lossfn()
-        self.lossfn = self.model.module.build_value_only_lossfn(device=self.rank)
-        # self.lossfn = mt.MultitaskTransformer.build_eval_lossfn(value_indexes=self.tokenizer.value_indexes().values(), device=self.rank)
+        self.lossfn = self.model.module.build_lossfn()
+        # self.lossfn = self.model.module.build_value_only_lossfn(device=self.rank)
+        
+        # self.eval_loss = self.model.module.build_value_only_lossfn(device=self.rank)
+        self.eval_loss = self.lossfn
 
-        # self.lossfn = self.safe_loss_fn
         self.metrics_path = None
         self.best_loss = np.inf
-        # self.eval_loss = mt.MultitaskTransformer.build_eval_lossfn(value_indexes=self.tokenizer.value_indexes().values(), device=self.rank)
-        self.eval_loss = self.model.module.build_value_only_lossfn(device=self.rank)
+        
         
         # Update GradScaler initialization with device parameter
         self.scaler = GradScaler()
@@ -409,12 +410,13 @@ class Trainer():
             return -1.0
 
     def start(self):
-        
+        self.log(f"Starting training")
         # Initialize accumulated loss
         iter = 0
         for epoch in range(self.max_epochs):
+            self.log(f"Starting epoch {epoch}")
             self.trn_iterator.sampler.set_epoch(epoch)
-            
+            dist.barrier() 
             self.log(f"Starting epoch {epoch}")
             
             self.model.train()  # Ensure model is in training mode
@@ -479,17 +481,20 @@ def main(rank, world_size):
     # v4 model = me.MoE(tokenizer, num_experts=8, hdim=512, dim_feedforward=2048, nhead=8, balance_loss_weight=.1, expert_layers=8)
     # model = me.MoE(tokenizer, num_experts=16, hdim=512, dim_feedforward=2048, nhead=8, balance_loss_weight=0.1, expert_layers=8)
 
-    # v5 model goes smaller and faster.
+    # v5 model goes smaller and faster. auc 93%ish
     # model = me.MoE(tokenizer, num_experts=64, k=2, hdim=64, dim_feedforward=128, nhead=2, balance_loss_weight=0.1, expert_layers=3)
 
-    model = me.MoE.load(outdir / "moe")
+    # v6 bigger experts less experts
+    model = me.MoE(tokenizer, num_experts=16, k=4, hdim=256, dim_feedforward=1024, nhead=4, balance_loss_weight=0.1, expert_layers=6)
+
+    # model = me.MoE.load(outdir / "moe")
     # model.balance_loss_weight = 1.0
 
     # model = me.MoE.load("brick/moe")
     num_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     
     # Optimize batch size for A100s - increase to utilize GPU memory better
-    batch_size = 350  # Increased from 64
+    batch_size = 100  # Increased from 64
     omp_threads = int(os.environ.get('OMP_NUM_THREADS', 10))
     world_size = torch.cuda.device_count()  # 8 on your machine
     
