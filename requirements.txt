@@ -17,7 +17,7 @@ dvc
 
 # Chemistry Libraries
 rdkit
-selfies==2.1.1
+selfies==2.2.0
 
 # Big Data Processing
 pyspark==3.5.0

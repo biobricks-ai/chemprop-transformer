@@ -11,7 +11,7 @@ import torch.nn.functional as F
 from torch.amp import autocast, GradScaler
 import traceback # Import traceback to log full error info
 import datetime
-from cvae.models.multitask_transformer import NoamLR
+from cvae.models.multitask_transformer import linear_warmup_and_decay_scheduler
 
 # Assuming modeldir is defined in the main script and accessible
 # from trainer if needed for periodic saving.
@@ -19,7 +19,7 @@ from cvae.models.multitask_transformer import NoamLR
 
 class Trainer():
 
-    def __init__(self, model, rank, tokenizer, trn_iterator, batch_size, max_epochs=100):
+    def __init__(self, model, rank, tokenizer, trn_iterator, batch_size, max_steps=100000):
         self.rank = rank
         self.global_step = 0
         self.trn_iterator = trn_iterator
@@ -72,7 +72,7 @@ class Trainer():
             self.log(f"Rank {rank}: Traceback:\n{traceback.format_exc()}")
             pass # If compile fails, use the DDP model directly
 
-        self.max_epochs = max_epochs
+        self.max_steps = max_steps
 
         # Add gradient accumulation for effectively larger batch sizes
         # self.gradient_accumulation_steps = 10
@@ -90,12 +90,10 @@ class Trainer():
         self.log(f"Rank {rank}: Total effective batch size: {total_effective_batch_size}")
         self.log(f"Rank {rank}: Base learning rate scaled to: {base_lr}")
 
-        warmup_steps = 200  # Can be tuned
-
         self.log(f"Rank {rank}: Initializing optimizer.")
         self.optimizer = torch.optim.AdamW(
             self.model.parameters(), # Use self.model (DDP wrapped, potentially compiled)
-            lr=1e-4,
+            lr=1,
             betas=(0.9, 0.99),
             weight_decay=1e-2
         )
@@ -103,7 +101,7 @@ class Trainer():
 
         self.log(f"Rank {rank}: Initializing scheduler.")
         # self.scheduler = ReduceLROnPlateau(self.optimizer, mode='min', factor=0.5, patience=3, min_lr=1e-6)
-        self.scheduler = NoamLR(self.optimizer, model_size=2048, warmup_steps=4000, multiplier=9.0, max_lr=1e-4, min_lr=1e-5)
+        self.scheduler = linear_warmup_and_decay_scheduler(self.optimizer, max_lr=3e-4, min_lr=1e-8, warmup_steps=10000, total_steps=100000)
         self.scheduler.step()
         self.log(f"Rank {rank}: Scheduler initialized. lr is {self.optimizer.param_groups[0]['lr']}")
 
@@ -115,10 +113,10 @@ class Trainer():
         self.scaler = GradScaler()
         self.log(f"Rank {rank}: GradScaler initialized.")
 
-        # Reduce evaluation frequency
-        self.first_eval = 500
+        # Reduce evaluation frequency but evaluate quickly to trigger model saving
+        self.first_eval = 100
         self.eval_every = 1000
-        self.eval_samples = 1000 # Number of batches to use for evaluation
+        self.eval_samples = 200 # Number of batches to use for evaluation
 
         # Ensure loss functions were built
         if self.lossfn is None or self.eval_loss is None:
@@ -165,7 +163,10 @@ class Trainer():
         return self
 
     def _train_batch(self, inp, teach, out):
-        # Loss functions are now initialized in __init__
+        
+        # step once per batch
+        self.scheduler.step()
+
         if self.lossfn is None:
              # This error message should now only appear if __init__ failed to set lossfn
              self.log(f"Rank {self.rank}: Error: Loss function is None in _train_batch. Initialization likely failed.")
@@ -200,7 +201,6 @@ class Trainer():
         # Scale gradients and accumulate
         # self.log(f"Rank {self.rank}: Starting backward pass for step {self.global_step}")
         self.scaler.scale(loss).backward()
-        # self.log(f"Rank {self.rank}: Backward pass complete.")
 
         # Only update weights at the end of accumulation cycle
         if (self.global_step + 1) % self.gradient_accumulation_steps == 0:
@@ -209,7 +209,6 @@ class Trainer():
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
             self.scaler.step(self.optimizer)
             self.scaler.update()
-            self.scheduler.step()
             # self.log(f"Rank {self.rank}: Optimizer step complete.")
 
         self.global_step += 1
@@ -262,7 +261,7 @@ class Trainer():
             all_preds = torch.cat(all_preds, dim=0)
             all_targets = torch.cat(all_targets, dim=0)
 
-            max_tokens = 50000
+            max_tokens = 5000
             if all_preds.size(0) > max_tokens:
                 all_preds = all_preds[:max_tokens]
                 all_targets = all_targets[:max_tokens]
@@ -293,35 +292,12 @@ class Trainer():
 
         return {'loss': mean_loss, 'auc': 0.0, 'bac': 0.0}
 
-    # def populate_property_loss_tracker(self):
-    #     self.log(f"Rank {self.rank}: Populating property loss tracker.")
-        
-    #     batches = 5000
-    #     trnenum = enumerate(self.trn_iterator)
-    #     i, (_ , teach, out) = next(trnenum)
-    #     B, T = out.shape
-    #     V = self.model.module.tokenizer.vocab_size    
-    #     pred = torch.randn(B, T, V, device=teach.device) # [batch_size, seq_len, vocab_size]
-    #     pred = pred.permute(0, 2, 1).contiguous() # [batch_size, vocab_size, seq_len]
-    #     for i, (inp, teach, out) in trnenum:
-    #         if i >= batches:
-    #             break
-    #         self.log(f"Rank {self.rank}: Populating property loss tracker: {i} / {batches}")
-    #         self.lossfn(self.model.module.parameters(), pred, out)
-    #     self.log(f"Rank {self.rank}: Property loss tracker populated.")
-    #     min_freq = min(self.model.module.property_loss_tracker.property_frequencies.values())
-    #     max_freq = max(self.model.module.property_loss_tracker.property_frequencies.values())
-    #     self.log(f"Rank {self.rank}: Property loss tracker min freq: {min_freq}, max freq: {max_freq}")
-
-    #     self.model.module.property_loss_tracker.frozen = True
-    #     dist.barrier()
-
     def start(self):
         self.log(f"Rank {self.rank}: Starting training loop.")
         # self.populate_property_loss_tracker()
-        iter = 0
         try:
-            for epoch in range(self.max_epochs):
+            epoch = 0
+            while self.global_step < self.max_steps:
                 self.log(f"Rank {self.rank}: Starting epoch {epoch}")
                 self.trn_iterator.sampler.set_epoch(epoch)
                 self.log(f"Rank {self.rank}: Sampler epoch set to {epoch}")
@@ -341,24 +317,26 @@ class Trainer():
                 self.log(f"Rank {self.rank}: Starting batch iteration for epoch {epoch}")
                 try:
                     for i, (inp, teach, out) in enumerate(self.trn_iterator):
-                        iter += 1
+                        if self.global_step >= self.max_steps:
+                            break
+                            
                         loss = self._train_batch(inp, teach, out)
 
                         # Log training metrics periodically from rank 0
-                        if iter % self.gradient_accumulation_steps == 0 and self.rank == 0:
+                        if self.global_step % self.gradient_accumulation_steps == 0 and self.rank == 0:
                             current_lr = self.optimizer.param_groups[0]['lr']
                             if self.metrics_path:
                                 try:
                                     with open(self.metrics_path, 'a') as f:
                                         # Placeholder 0s for AUC/BAC in train logs
-                                        f.write(f"train\t{iter}\t{loss:.4f}\t{current_lr:.6f}\t0.0\t0.0\n")
+                                        f.write(f"train\t{self.global_step}\t{loss:.4f}\t{current_lr:.6f}\t0.0\t0.0\n")
                                 except Exception as e:
                                     self.log(f"Rank {self.rank}: Error writing to metrics file: {e}")
-                            logging.info(f"Epoch: {epoch}, Step: {iter}, Train Loss: {loss:.4f}, LR: {current_lr:.6f}")
+                            logging.info(f"Epoch: {epoch}, Step: {self.global_step}, Train Loss: {loss:.4f}, LR: {current_lr:.6f}")
 
                         # Evaluate less frequently to speed up training
-                        if iter > self.first_eval and iter % self.eval_every == 0:
-                            self.log(f"Rank {self.rank}: Starting evaluation at step {iter}")
+                        if self.global_step == self.first_eval or self.global_step % self.eval_every == 0:
+                            self.log(f"Rank {self.rank}: Starting evaluation at step {self.global_step}")
                             # Ensure all processes are synced before evaluation
                             torch.cuda.synchronize() # Wait for current GPU operations to complete
                             
@@ -393,25 +371,25 @@ class Trainer():
                                         self.log(f"Rank {self.rank}: Warning: Model module does not have a 'save' method. Skipping best model save.")
 
                                 # Also just save periodically in case of crash
-                                # if self.savepath: # Check if savepath was set
-                                #     periodic_save_path = self.savepath.parent / f"step_{self.global_step}"
-                                #     if not periodic_save_path.exists():
-                                #         periodic_save_path.mkdir(exist_ok=True, parents=True)
-                                #     if hasattr(self.model.module, 'save'):
-                                #          self.log(f"Rank {self.rank}: Saving periodic model checkpoint to {periodic_save_path}")
-                                #          self.model.module.save(periodic_save_path)
-                                #     else:
-                                #         self.log(f"Rank {self.rank}: Warning: Model module does not have a 'save' method. Skipping periodic model save.")
+                                if self.savepath: # Check if savepath was set
+                                    periodic_save_path = self.savepath.parent / f"step_{self.global_step}"
+                                    if not periodic_save_path.exists():
+                                        periodic_save_path.mkdir(exist_ok=True, parents=True)
+                                    if hasattr(self.model.module, 'save'):
+                                         self.log(f"Rank {self.rank}: Saving periodic model checkpoint to {periodic_save_path}")
+                                         self.model.module.save(periodic_save_path)
+                                    else:
+                                        self.log(f"Rank {self.rank}: Warning: Model module does not have a 'save' method. Skipping periodic model save.")
 
                                 # Log evaluation metrics from rank 0
                                 if self.metrics_path:
                                     current_lr = self.optimizer.param_groups[0]['lr']
                                     try:
                                         with open(self.metrics_path, 'a') as f:
-                                            f.write(f"eval\t{iter}\t{eval_loss:.4f}\t{current_lr:.6f}\t{auc:.4f}\t{bac:.4f}\n")
+                                            f.write(f"eval\t{self.global_step}\t{eval_loss:.4f}\t{current_lr:.6f}\t{auc:.4f}\t{bac:.4f}\n")
                                     except Exception as e:
                                         self.log(f"Rank {self.rank}: Error writing to metrics file: {e}")
-                                    logging.info(f"Epoch: {epoch}, Step: {iter}, Train Loss (last cycle): {loss:.4f}, "
+                                    logging.info(f"Epoch: {epoch}, Step: {self.global_step}, Train Loss (last cycle): {loss:.4f}, "
                                         f"Eval Loss: {eval_loss:.4f}, BAC: {bac:.4f}, AUC: {auc:.4f}, "
                                         f"LR: {current_lr:.6f}")
 
@@ -427,10 +405,12 @@ class Trainer():
                             self.log(f"Rank {self.rank}: Model set back to training mode.")
 
                 except Exception as e:
-                    self.log(f"Rank {self.rank}: Error during training loop at step {iter}: {e}")
+                    self.log(f"Rank {self.rank}: Error during training loop at step {self.global_step}: {e}")
                     import traceback
                     self.log(f"Rank {self.rank}: Traceback:\n{traceback.format_exc()}")
                     # Don't exit, try to continue with next epoch
+                
+                epoch += 1
 
         except Exception as e:
             self.log(f"Rank {self.rank}: Fatal error in training loop: {e}")
@@ -442,5 +422,5 @@ class Trainer():
             except:
                 pass
         
-        self.log(f"Rank {self.rank}: Training loop finished after {self.max_epochs} epochs.")
+        self.log(f"Rank {self.rank}: Training loop finished after {self.global_step} steps.")
 

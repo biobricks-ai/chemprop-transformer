@@ -334,6 +334,8 @@ class MoE(nn.Module):
 
             return token_losses
 
+        return lossfn
+
     def save(self, path):
         if not isinstance(path, pathlib.Path):
             path = pathlib.Path(path)
@@ -367,7 +369,7 @@ class MoE(nn.Module):
         tokenizer = SelfiesPropertyValTokenizer.load(dirpath / "spvt_tokenizer")
         config = json.load(open(dirpath / "config.json"))
         model = MoE(tokenizer, **config)
-        state_dict = torch.load(dirpath / 'mtransformer.pt', map_location='cpu')
+        state_dict = torch.load(dirpath / 'mtransformer.pt', map_location='cpu', weights_only=True)
 
         model.load_state_dict(state_dict)
         model.eval()

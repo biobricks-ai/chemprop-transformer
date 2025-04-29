@@ -347,20 +347,65 @@ class LabelSmoothingCrossEntropySequence(nn.Module):
 
         return loss
 
-class NoamLR(torch.optim.lr_scheduler._LRScheduler):
 
+class NoamLR(torch.optim.lr_scheduler._LRScheduler):
+    """
+    Learning rate scheduler from "Attention is All You Need" (Vaswani et al.).
+    
+    Arguments:
+        optimizer: The optimizer to modify
+        model_size: Hidden dimension size of the model (d_model in the paper)
+        warmup_steps: Number of warmup steps before starting decay
+        last_epoch: The index of the last epoch (-1 default)
+        multiplier: Overall scale factor for the learning rate
+        max_lr: Maximum learning rate (after applying multiplier)
+        min_lr: Minimum learning rate to clip at
+    """
     def __init__(self, optimizer, model_size, warmup_steps, last_epoch=-1, multiplier=1.0, max_lr=5e-5, min_lr=1e-6):
         self.model_size = model_size
         self.warmup_steps = warmup_steps
         self.multiplier = multiplier
+        # Store the true maximum learning rate (after multiplier)
+        self.true_max_lr = max_lr
         self.max_lr = max_lr
         self.min_lr = min_lr
         super(NoamLR, self).__init__(optimizer, last_epoch)
 
     def get_lr(self):
         step_num = self.last_epoch + 1
-        scale = self.model_size ** (-0.5) * min(step_num ** (-0.5), step_num * self.warmup_steps ** (-1.5))
-        lrs = [self.max_lr * self.multiplier * scale for base_lr in self.base_lrs]
-        lrs = [min(lr, self.max_lr) for lr in lrs]
+        
+        # Calculate the Noam scale factor
+        scale = self.model_size ** (-0.5) * min(
+            step_num ** (-0.5), 
+            step_num * self.warmup_steps ** (-1.5)
+        )
+        
+        # Apply multiplier to the scale
+        scaled_lr = self.max_lr * self.multiplier * scale
+        
+        # Generate learning rates for all parameter groups
+        lrs = [scaled_lr for _ in self.base_lrs]
+        
+        # Clip learning rates between min_lr and true_max_lr
+        lrs = [min(lr, self.true_max_lr) for lr in lrs]
         lrs = [max(lr, self.min_lr) for lr in lrs]
+        
         return lrs
+
+from torch.optim.lr_scheduler import LambdaLR
+
+def linear_warmup_and_decay_scheduler(optimizer, max_lr, min_lr, warmup_steps, total_steps):
+    """
+    Returns a GPT-3 style LR scheduler: linear warmup + linear decay
+    """
+    def lr_lambda(step):
+        base_lr = optimizer.defaults['lr']
+        if step < warmup_steps:
+            return base_lr * (min_lr + (max_lr - min_lr) * (step / warmup_steps))
+        
+        # Linear decay from peak_lr back to min_lr
+        decay_steps = total_steps - warmup_steps
+        decay_ratio = (total_steps - step) / decay_steps
+        return base_lr * (min_lr + (max_lr - min_lr) * decay_ratio)
+
+    return LambdaLR(optimizer, lr_lambda)
