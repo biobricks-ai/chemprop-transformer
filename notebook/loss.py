@@ -25,7 +25,7 @@ def draw_plot(last_scheduler_length=0):
     data = data[data['batch'] > batch_skip]
 
     # create and append a new dataframe that batches the 'train' type and finds the average loss
-    sched_interval = 200
+    sched_interval = 20
     sched_data = data[data['type'] == 'train'].assign(batch=lambda x: (x['batch'] // sched_interval) * sched_interval)
     sched_data = sched_data.groupby('batch')['loss'].mean().reset_index()
     sched_data['type'] = 'sched'
@@ -33,8 +33,6 @@ def draw_plot(last_scheduler_length=0):
 
     if scheduler_length == last_scheduler_length:
         return last_scheduler_length
-    
-    
 
     def print_losses(loss_type):
         dt = data[data['type'] == loss_type]['loss'].round(6)
@@ -47,6 +45,9 @@ def draw_plot(last_scheduler_length=0):
     # last_lr = data['lr'].iloc[-1]
 
     # print(colored(f"Epoch: {epoch} Last learning rate: {last_lr}", 'white'))
+    if len(data[data['type'] == 'eval']) > 0:
+        min_eval_loss = data[data['type'] == 'eval']['loss'].min()
+        print(colored(f"Min eval loss: {min_eval_loss:.6f}", 'white'))
     print_losses('train')
     print_losses('sched')
     if len(data[data['type'] == 'eval']) > 0:

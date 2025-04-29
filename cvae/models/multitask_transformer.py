@@ -105,9 +105,13 @@ class MultitaskTransformer(nn.Module):
         
         self.embedding = nn.Embedding(tokenizer.vocab_size, self.hdim)
         self.outemb = nn.Embedding(tokenizer.vocab_size, self.hdim)        
-        self.positional_encoding = PositionalEncoding(self.hdim)
         
-        # self.positional_encoding = LearnedPositionalEncoding(self.hdim)
+        self.positional_encoding_inp = PositionalEncoding(self.hdim)
+        # self.positional_encoding_inp = LearnedPositionalEncoding(self.hdim)
+
+        self.positional_encoding_out = PositionalEncoding(self.hdim)
+        # self.positional_encoding_out = LearnedPositionalEncoding(self.hdim)
+        
         self.embedding_norm = nn.LayerNorm(self.hdim)
         
         encode_args = {"d_model": self.hdim, "nhead": self.nhead, "dim_feedforward": self.dim_feedforward, "dropout": dropout_rate}
@@ -128,16 +132,13 @@ class MultitaskTransformer(nn.Module):
 
 
     def forward(self, input, teach_forcing):
-        assert input.max() < self.embedding.num_embeddings, f"bad input token index: {input.max().item()}"
-        assert input.min() >= 0, "negative input token index"
-        assert teach_forcing.max() < self.outemb.num_embeddings, f"bad teach_forcing token index: {teach_forcing.max().item()}"
 
         memory_mask = input == self.token_pad_idx
         
-        input_embedding = self.positional_encoding(self.embedding_norm(self.embedding(input)))
+        input_embedding = self.positional_encoding_inp(self.embedding_norm(self.embedding(input)))
         input_encoding = self.encoder(input_embedding, src_key_padding_mask=memory_mask)
         
-        teach_forcing = self.positional_encoding(self.outemb(teach_forcing))
+        teach_forcing = self.positional_encoding_out(self.outemb(teach_forcing))
         tgt_mask = generate_custom_subsequent_mask(teach_forcing.size(1), device=input.device)
         
         decoded = self.decoder(teach_forcing, input_encoding, tgt_mask=tgt_mask, memory_key_padding_mask=memory_mask)
@@ -230,6 +231,7 @@ def process_assay_vals(raw_assay_vals: Tensor, pad_idx: int, sep_idx: int, end_i
     
     return tch, out
 
+
 class SequenceShiftDataset(Dataset):
     def __init__(self, path, tokenizer: SelfiesPropertyValTokenizer, nprops=5, assay_filter=[]):
         self.nprops = nprops
@@ -266,6 +268,19 @@ class SequenceShiftDataset(Dataset):
 
         return selfies_raw, tch, out
 
+class TwoClassSequenceShiftDataset(SequenceShiftDataset):
+    
+    def __init__(self, path, tokenizer: SelfiesPropertyValTokenizer, nprops=5, assay_filter=[]):
+        super().__init__(path, tokenizer, nprops=nprops, assay_filter=assay_filter)
+        self.value_lookup = torch.full((tokenizer.vocab_size,), -1, dtype=torch.long)
+        for k, v in tokenizer.value_indexes().items():
+            self.value_lookup[v] = k
+
+    def __getitem__(self, idx):
+        selfies_raw, tch, out = super().__getitem__(idx)
+        out01 = self.value_lookup[out]
+        return selfies_raw, tch, out01
+
 class FastPackedSequenceShiftDataset(Dataset):
 
     def __init__(self, path_prefix):
@@ -293,49 +308,72 @@ class FastPackedSequenceShiftDataset(Dataset):
         return self.selfies[idx], self.tch[idx], self.out[idx]
 
 class LabelSmoothingCrossEntropySequence(nn.Module):
-    def __init__(self, epsilon_ls=0.1, ignore_index=None):
+    def __init__(self, epsilon_ls=0.05, ignore_index=None):
         super(LabelSmoothingCrossEntropySequence, self).__init__()
         self.epsilon_ls = epsilon_ls
         self.ignore_index = ignore_index
 
     def forward(self, out, tgt):
         num_classes = out.size(-1)
-        batch_size, seq_len = tgt.size()
-        fill = self.epsilon_ls / (num_classes - 1)
         dev = out.device
         
-        with torch.no_grad():
-            # Create smoothed label
-            smooth_label = torch.full(size=(batch_size, seq_len, num_classes), fill_value=fill, device=dev)
-            tgt = tgt.unsqueeze(-1)  # Add an extra dimension for scatter_
-            smooth_label.scatter_(-1, tgt, 1.0 - self.epsilon_ls)
+        if tgt.dim() == 1:
+            # Masked case: (num_tokens,)
+            fill = self.epsilon_ls / (num_classes - 1)
+            with torch.no_grad():
+                smooth_label = torch.full(size=(tgt.size(0), num_classes), fill_value=fill, device=dev)
+                tgt = tgt.unsqueeze(-1)
+                smooth_label.scatter_(-1, tgt, 1.0 - self.epsilon_ls)
+
+                if self.ignore_index is not None:
+                    ignore_mask = tgt.eq(self.ignore_index)
+                    smooth_label.masked_fill_(ignore_mask, 0.0)
+
+            loss = -smooth_label * F.log_softmax(out, dim=-1)
 
             if self.ignore_index is not None:
-                # Create a mask for ignoring the index
-                ignore_mask = tgt.eq(self.ignore_index)
-                smooth_label.masked_fill_(ignore_mask, 0.0)
+                loss.masked_fill_(ignore_mask, 0.0)
 
-        # Calculate cross-entropy loss with the smoothed labels
-        loss = -smooth_label * F.log_softmax(out, dim=-1)
-        
-        if self.ignore_index is not None:
-            # Apply the ignore mask to the loss
-            loss.masked_fill_(ignore_mask, 0.0)
+            loss = loss.sum(dim=-1)
+            loss = loss.mean()
 
-        loss = loss.sum(dim=-1)  # Sum over classes
-        # Only average over non-ignored elements
-        loss = loss.masked_select(~ignore_mask.squeeze(-1)).mean()
-        
+        else:
+            # Regular case: (batch_size, seq_len)
+            batch_size, seq_len = tgt.size()
+            fill = self.epsilon_ls / (num_classes - 1)
+            with torch.no_grad():
+                smooth_label = torch.full(size=(batch_size, seq_len, num_classes), fill_value=fill, device=dev)
+                tgt = tgt.unsqueeze(-1)
+                smooth_label.scatter_(-1, tgt, 1.0 - self.epsilon_ls)
+
+                if self.ignore_index is not None:
+                    ignore_mask = tgt.eq(self.ignore_index)
+                    smooth_label.masked_fill_(ignore_mask, 0.0)
+
+            loss = -smooth_label * F.log_softmax(out, dim=-1)
+
+            if self.ignore_index is not None:
+                loss.masked_fill_(ignore_mask, 0.0)
+
+            loss = loss.sum(dim=-1)
+            loss = loss.masked_select(~ignore_mask.squeeze(-1)).mean()
+
         return loss
 
 class NoamLR(torch.optim.lr_scheduler._LRScheduler):
 
-    def __init__(self, optimizer, model_size, warmup_steps, last_epoch=-1):
+    def __init__(self, optimizer, model_size, warmup_steps, last_epoch=-1, multiplier=1.0, max_lr=5e-5, min_lr=1e-6):
         self.model_size = model_size
         self.warmup_steps = warmup_steps
+        self.multiplier = multiplier
+        self.max_lr = max_lr
+        self.min_lr = min_lr
         super(NoamLR, self).__init__(optimizer, last_epoch)
 
     def get_lr(self):
         step_num = self.last_epoch + 1
-        lr = self.model_size ** (-0.5) * min(step_num ** (-0.5), step_num * self.warmup_steps ** (-1.5))
-        return [base_lr * lr for base_lr in self.base_lrs]
+        scale = self.model_size ** (-0.5) * min(step_num ** (-0.5), step_num * self.warmup_steps ** (-1.5))
+        lrs = [self.max_lr * self.multiplier * scale for base_lr in self.base_lrs]
+        lrs = [min(lr, self.max_lr) for lr in lrs]
+        lrs = [max(lr, self.min_lr) for lr in lrs]
+        return lrs
