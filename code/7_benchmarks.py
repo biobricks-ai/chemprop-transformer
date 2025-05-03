@@ -1,11 +1,16 @@
-import pandas as pd, sqlite3, seaborn as sns, matplotlib.pyplot as plt
+import pandas as pd, sqlite3, seaborn as sns, matplotlib.pyplot as plt, pathlib
 from matplotlib.colors import ListedColormap
+
+#%% SETUP =================================================================================
+outdir = pathlib.Path("cache/benchmarks")
+outdir.mkdir(exist_ok=True, parents=True)
 
 #%% TOXCAST BENCHMARK ===========================================================
 conn = sqlite3.connect('brick/cvae.sqlite')
 
 # get all the property_tokens for tox21 properties
 prop_src = pd.read_sql("SELECT property_token,title,source FROM property p INNER JOIN source s on p.source_id = s.source_id", conn)
+# prop_src = prop_src[prop_src['source'] != 'Tox21'] #tox21 is redundant
 
 # assert that each property_token has only one title
 assert prop_src.groupby('property_token').size().max() == 1
@@ -17,13 +22,17 @@ evaldf = pd.read_parquet('cache/eval_multi_properties/multitask_metrics.parquet'
 # get the median AUC for each property
 evaldf.aggregate({'AUC': 'median','cross_entropy_loss':'median','assay':'count'}) # 89% median auc, .482 median cross entropy loss
 res = evaldf.groupby(['source','nprops']).aggregate({'AUC': 'median','assay':'count'}).sort_values(by='AUC',ascending=False)
-evaldf[evaldf['source'] == 'tox21'].groupby(['nprops']).aggregate({'AUC': 'median','assay':'count'}).sort_values(by='AUC',ascending=False)
+tox21 = evaldf[evaldf['source'] == 'Tox21'].groupby(['nprops'])\
+    .aggregate({'AUC': 'median','assay':'count'})\
+    .sort_values(by='AUC',ascending=False)\
+    .reset_index()
+tox21.to_csv(outdir / 'tox21_auc_by_nprops.csv', index=False)
 
 #              AUC  assay
 # nprops                 
-# 2       0.909173    110
-# 3       0.902808    110
 # 4       0.900132    110
+# 3       0.902808    110
+# 2       0.909173    110
 # 1       0.871136     66
 # 0       0.829932     18
 
@@ -47,7 +56,7 @@ plt.title('AUC by Source and Number of Prior Properties')
 plt.xlabel('Number of Prior Properties')
 plt.ylabel('Source')
 plt.tight_layout()
-plt.savefig('notebook/plots/source_nprops_heatmap.png')
+plt.savefig(outdir / 'source_nprops_heatmap.png')
 plt.close()
 
 # endregion
@@ -119,4 +128,4 @@ cbar.ax.yaxis.set_tick_params(color='white')
 cbar.ax.yaxis.set_ticklabels([f'{x:.2f}' for x in cbar.get_ticks()], color='white')
 
 # Save the figure to a file
-plt.savefig('notebook/plots/category_auc_heatmap.png',facecolor='black',bbox_inches='tight',dpi=300)
+plt.savefig(outdir / 'category_auc_heatmap.png',facecolor='black',bbox_inches='tight',dpi=300)

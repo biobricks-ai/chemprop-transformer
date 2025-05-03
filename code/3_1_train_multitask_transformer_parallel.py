@@ -124,6 +124,11 @@ def main(rank, world_size):
     trainer.start()
     cleanup()
 
+    # save modeldir/moe to brick/moe
+    # delete brick/moe directory
+    shutil.rmtree("brick/moe", ignore_errors=True)
+    shutil.copytree(modeldir / "moe", "brick/moe")
+
 if __name__ == "__main__":
     rank = int(os.environ["RANK"])
     world_size = int(os.environ["WORLD_SIZE"])

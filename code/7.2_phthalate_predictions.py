@@ -11,7 +11,7 @@ import matplotlib.gridspec as gridspec
 
 tqdm.pandas()
 
-predictor : Predictor = Predictor('flask_cvae/predictions.sqlite')
+predictor : Predictor = Predictor()
 def build_propdf():
     conn = sqlite3.connect('brick/cvae.sqlite')
     proptitle = pd.read_sql("SELECT property_token,title FROM property p", conn).groupby('property_token').first().reset_index()

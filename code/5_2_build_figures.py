@@ -1,7 +1,9 @@
-import matplotlib.pyplot as plt, pandas as pd, seaborn as sns
+import matplotlib.pyplot as plt, pandas as pd, seaborn as sns, pathlib
 import random
 
 # SETUP =================================================================================
+outdir = pathlib.Path("cache/build_figures")
+outdir.mkdir(exist_ok=True, parents=True)
 df = pd.read_parquet('cache/eval_multi_properties/multitask_metrics.parquet')
 df.aggregate({'AUC': 'median', 'ACC': 'median', 'BAC': 'median', "cross_entropy_loss": 'median'})
 df.groupby('nprops').aggregate({'AUC': 'median', 'ACC': 'median', 'BAC': 'median', "cross_entropy_loss": 'median', 'assay': 'nunique'})
@@ -34,6 +36,6 @@ def auc_histogram(df,nprops):
     plt.subplots_adjust(top=0.9)  # Adjust this value as needed to make room for the title
     g.figure.tight_layout(rect=[0, 0.03, 1, 0.9])  # Adjust the rect to ensure title is visible
     g.add_legend()
-    plt.savefig('notebook/plots/multitask_transformer_metrics.png', facecolor='none', transparent=True)
+    plt.savefig(outdir / f'auc_histogram_{nprops}.png', facecolor='none', transparent=True)
 
 auc_histogram(df, nprops=5)

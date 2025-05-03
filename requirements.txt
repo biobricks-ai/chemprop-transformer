@@ -2,7 +2,7 @@
 torch
 torchvision
 torchaudio
-pytorch-cuda==11.7
+pytorch-cuda
 
 # Data Science & ML Libraries
 numpy
