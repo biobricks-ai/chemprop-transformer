@@ -1,7 +1,26 @@
 import json
-import selfies as sf
 from pyspark.sql.types import BooleanType, ArrayType, IntegerType, FloatType, StringType
 import pyspark.sql.functions as F
+import logging
+import socket
+import random
+import selfies as sf
+
+# Setup executor-local logger
+host = socket.gethostname()
+logger = logging.getLogger(f"spark_executor_{host}")
+logger.setLevel(logging.INFO)
+if not logger.hasHandlers():
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter('[%(levelname)s] %(message)s'))
+    logger.addHandler(handler)
+
+def split_selfies(selfies_string, sample=0.0001):
+    if selfies_string:
+        if random.random() < sample:
+            logger.info(f"[{host}] Splitting SELFIES")
+        return sf.split_selfies(selfies_string)
+    return []
 
 class SelfiesTokenizer:
     
@@ -18,7 +37,7 @@ class SelfiesTokenizer:
     def fit(self, dataset, column):
         # Extract unique symbols from the dataset in a distributed manner
         unique_symbols_rdd = dataset.select(column).rdd \
-            .flatMap(lambda row: sf.split_selfies(row[column]) if row[column] is not None else []) \
+            .flatMap(lambda row: split_selfies(row[column], sample=0.0001)) \
             .distinct()
 
         # Collect unique symbols to the driver and merge with existing mappings
@@ -35,9 +54,11 @@ class SelfiesTokenizer:
         indices = [self.symbol_to_index.get(symbol, self.symbol_to_index[self.PAD_TOKEN]) for symbol in symbols]
         return indices
             
-    def transform(self, dataset, selfies_column, new_column, pad_length=120):
+    def transform(self, dataset, selfies_column, new_column, pad_length=120, sample_rate=0.0001):
         # Function to convert selfies string to indices and pad
         def selfies_to_indices(selfies_string):
+            if random.random() < sample_rate:
+                logger.info(f"[{host}] Transforming SELFIES")
             if selfies_string is not None:
                 symbols = [self.SOS_TOKEN] + list(sf.split_selfies(selfies_string)) + [self.END_TOKEN]
                 indices = [self.symbol_to_index.get(symbol, self.symbol_to_index[self.PAD_TOKEN]) for symbol in symbols]

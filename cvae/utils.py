@@ -18,9 +18,15 @@ def setup_logging(log_file, logmodule):
 def get_spark_session():
     return pyspark.sql.SparkSession.builder \
         .appName("ChemharmonyDataProcessing") \
-        .config("spark.driver.memory", "64g") \
-        .config("spark.driver.maxResultSize", "48g") \
+        .config("spark.driver.memory", "128g") \
+        .config("spark.driver.maxResultSize", "96g") \
         .config("spark.executor.memory", "64g") \
+        .config("spark.executor.cores", 8) \
+        .config("spark.cores.max", 192) \
+        .config("spark.sql.shuffle.partitions", 384) \
+        .config("spark.sql.files.maxPartitionBytes", 128 * 1024 * 1024) \
+        .config("spark.network.timeout", "600s") \
+        .config("spark.executor.heartbeatInterval", "60s") \
         .getOrCreate()
 
 def write_path(path, text, mode='a'):

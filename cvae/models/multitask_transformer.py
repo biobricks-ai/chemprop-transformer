@@ -13,6 +13,7 @@ import math
 import pathlib
 import tqdm
 import bisect
+import random
 
 from cvae.tokenizer.selfies_property_val_tokenizer import SelfiesPropertyValTokenizer
 import cvae.utils
@@ -106,11 +107,11 @@ class MultitaskTransformer(nn.Module):
         self.embedding = nn.Embedding(tokenizer.vocab_size, self.hdim)
         self.outemb = nn.Embedding(tokenizer.vocab_size, self.hdim)        
         
-        self.positional_encoding_inp = PositionalEncoding(self.hdim)
-        # self.positional_encoding_inp = LearnedPositionalEncoding(self.hdim)
+        # self.positional_encoding_inp = PositionalEncoding(self.hdim)
+        self.positional_encoding_inp = LearnedPositionalEncoding(self.hdim)
 
-        self.positional_encoding_out = PositionalEncoding(self.hdim)
-        # self.positional_encoding_out = LearnedPositionalEncoding(self.hdim)
+        # self.positional_encoding_out = PositionalEncoding(self.hdim)
+        self.positional_encoding_out = LearnedPositionalEncoding(self.hdim)
         
         self.embedding_norm = nn.LayerNorm(self.hdim)
         
@@ -132,20 +133,26 @@ class MultitaskTransformer(nn.Module):
 
 
     def forward(self, input, teach_forcing):
-
         memory_mask = input == self.token_pad_idx
-        
+
         input_embedding = self.positional_encoding_inp(self.embedding_norm(self.embedding(input)))
         input_encoding = self.encoder(input_embedding, src_key_padding_mask=memory_mask)
-        
-        teach_forcing = self.positional_encoding_out(self.outemb(teach_forcing))
-        tgt_mask = generate_custom_subsequent_mask(teach_forcing.size(1), device=input.device)
-        
-        decoded = self.decoder(teach_forcing, input_encoding, tgt_mask=tgt_mask, memory_key_padding_mask=memory_mask)
+
+        teach_forcing_emb = self.positional_encoding_out(self.outemb(teach_forcing))
+        tgt_mask = generate_custom_subsequent_mask(teach_forcing_emb.size(1), device=input.device)
+
+        tgt_key_padding_mask = (teach_forcing == self.token_pad_idx).float()  # match tgt_mask dtype
+
+        decoded = self.decoder(
+            teach_forcing_emb,
+            input_encoding,
+            tgt_mask=tgt_mask,
+            memory_key_padding_mask=memory_mask,
+            tgt_key_padding_mask=tgt_key_padding_mask
+        )
         decoded = self.decoder_norm(decoded)
-        
+
         logits = self.classification_layers(decoded)
-        
         return logits
 
 
@@ -270,8 +277,10 @@ class SequenceShiftDataset(Dataset):
 
 class FastPackedSequenceShiftDataset(Dataset):
 
-    def __init__(self, path_prefix):
+    def __init__(self, path_prefix, nprops=None):
         meta = json.load(open(f"{path_prefix}_meta.json"))
+        self.nprops = nprops
+
         def load_tensor(name):
             shape = tuple(meta[name]["shape"])
             dtype = getattr(torch, meta[name]["dtype"].split('.')[-1])  # e.g. "torch.int64" → torch.int64
@@ -287,6 +296,14 @@ class FastPackedSequenceShiftDataset(Dataset):
         self.selfies = load_tensor("selfies")
         self.tch = load_tensor("tch")
         self.out = load_tensor("out")
+
+        # sequence is <pad> <sos> <prop1> <val1> <prop2> <val2> ... <propN> <valn> <eos> for teach
+        # sequence is <sos> <prop1> <val1> <prop2> <val2> ... <propN> <valn> <eos> for out
+        # so we want for teach[0:(1+1+2*nprops+1)] and out[0:(1+2*nprops+1)]
+        if self.nprops is not None:
+            end = 3 + 2 * self.nprops
+            self.tch = self.tch[:, :end]
+            self.out = self.out[:, :end]
 
     def __len__(self):
         return self.selfies.size(0)
@@ -394,18 +411,256 @@ class NoamLR(torch.optim.lr_scheduler._LRScheduler):
 
 from torch.optim.lr_scheduler import LambdaLR
 
-def linear_warmup_and_decay_scheduler(optimizer, max_lr, min_lr, warmup_steps, total_steps):
+def linear_warmup_and_decay_scheduler(optimizer, warmup_steps, total_steps, max_lr=1.0, min_lr=0.0):
     """
-    Returns a GPT-3 style LR scheduler: linear warmup + linear decay
+    GPT-3 style scheduler: linear warmup from min_lr to max_lr, then linear decay back to min_lr.
+    Assumes max_lr is 1.0 unless scaling is required.
     """
     def lr_lambda(step):
-        base_lr = optimizer.defaults['lr']
         if step < warmup_steps:
-            return base_lr * (min_lr + (max_lr - min_lr) * (step / warmup_steps))
-        
-        # Linear decay from peak_lr back to min_lr
-        decay_steps = total_steps - warmup_steps
-        decay_ratio = (total_steps - step) / decay_steps
-        return base_lr * (min_lr + (max_lr - min_lr) * decay_ratio)
+            return min_lr + (max_lr - min_lr) * (step / warmup_steps)
+        elif step < total_steps:
+            decay_steps = total_steps - warmup_steps
+            return min_lr + (max_lr - min_lr) * ((total_steps - step) / decay_steps)
+        else:
+            return min_lr  # stable after total_steps
 
-    return LambdaLR(optimizer, lr_lambda)
+    return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+
+from typing import Tuple, Dict, List, Optional
+
+def create_shuffled_indices(pairs: torch.Tensor, sample_hash: int) -> List[int]:
+    """Create deterministically shuffled indices based on a hash."""
+    total_pairs = pairs.size(0)
+    
+    # Create a deterministic random generator with seed
+    random_gen = random.Random(sample_hash)
+    
+    # Generate a deterministic shuffle pattern
+    shuffled_indices = list(range(total_pairs))
+    random_gen.shuffle(shuffled_indices)
+    
+    return shuffled_indices
+
+
+def rotate_indices(indices: List[int], rotation_idx: int) -> List[int]:
+    """Rotate a list of indices by rotation_idx positions."""
+    if not indices:
+        return []
+    
+    total = len(indices)
+    rotation_idx = rotation_idx % total  # Ensure we don't exceed bounds
+    
+    # Create a rotated list of indices
+    return indices[rotation_idx:] + indices[:rotation_idx]
+
+@torch.jit.script
+def process_assay_vals_rotating(
+    raw_assay_vals: torch.Tensor, 
+    pad_idx: int, 
+    sep_idx: int, 
+    end_idx: int, 
+    nprops: int,
+    shuffled_indices: List[int],
+    rotation_idx: int
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Process assay values with rotation to ensure each property gets to be first.
+    Now with TorchScript compatibility.
+    
+    Args:
+        raw_assay_vals: Raw tensor of assay values with padding
+        pad_idx: Padding index value
+        sep_idx: Separator index value
+        end_idx: End index value
+        nprops: Number of property-value pairs to include
+        shuffled_indices: Pre-shuffled indices 
+        rotation_idx: Current rotation index (determines which property comes first)
+    """
+    mask = raw_assay_vals != pad_idx
+    assay_vals = raw_assay_vals[mask][1:-1]  # Remove SOS/EOS tokens
+    
+    # Safety check
+    if assay_vals.numel() == 0:
+        # Return empty tensors with proper structure
+        device = raw_assay_vals.device
+        dummy = torch.tensor([1, sep_idx, end_idx] + [pad_idx] * (2 * nprops), device=device)
+        return dummy[:-1], dummy[1:]
+    
+    # Reshape into property-value pairs
+    pairs = assay_vals.view(-1, 2)
+    total_pairs = pairs.size(0)
+    
+    # Apply rotation within the TorchScript function
+    total = len(shuffled_indices)
+    rotation_idx = rotation_idx % total  # Ensure we don't exceed bounds
+    
+    # Manual rotation (avoiding tolist() which isn't supported in TorchScript)
+    rotated_indices: List[int] = []
+    for i in range(total):
+        rotated_indices.append(shuffled_indices[(i + rotation_idx) % total])
+    
+    if total_pairs <= nprops:
+        # Use all rotated indices
+        selected_indices = rotated_indices
+    else:
+        # Take the first nprops indices from the rotated list
+        selected_indices = rotated_indices[:nprops]
+    
+    # Get the selected pairs
+    selected_pairs = torch.stack([pairs[i] for i in selected_indices])
+    
+    # Flatten the selected pairs
+    selected_flat = selected_pairs.flatten()
+    
+    # Truncate or pad to the right size
+    if len(selected_flat) > 2 * nprops:
+        av_truncate = selected_flat[:2 * nprops]
+    else:
+        av_truncate = selected_flat
+    
+    # Add SOS and EOS tokens
+    device = raw_assay_vals.device
+    av_sos_eos = torch.cat([
+        torch.tensor([sep_idx], device=device),
+        av_truncate,
+        torch.tensor([end_idx], device=device)
+    ])
+    
+    # Pad to fixed length
+    pad_value = float(pad_idx)
+    out = F.pad(av_sos_eos, (0, nprops * 2 + 2 - av_sos_eos.size(0)), value=pad_value)
+    
+    # Create teacher forcing input (shifted by 1)
+    tch = torch.cat([torch.tensor([1], device=device), out[:-1]])
+    
+    return tch, out
+
+
+class RotatingModuloSequenceShiftDataset(Dataset):
+    def __init__(self, path, tokenizer, nprops=5, assay_filter=None):
+        """
+        Dataset with rotating property sampling to ensure each property gets to be first.
+        
+        Args:
+            path: Path to data files
+            tokenizer: Tokenizer for processing sequences
+            nprops: Number of property-value pairs to include
+            assay_filter: Optional list of property IDs to filter
+        """
+        self.nprops = nprops
+        self.assay_filter = [] if assay_filter is None else assay_filter
+        self.data = []
+        self.cumulative_lengths = [0]
+        cumulative_length = 0
+        self.tokenizer = tokenizer
+        self.pad_idx = tokenizer.PAD_IDX
+        self.sep_idx = tokenizer.SEP_IDX
+        self.end_idx = tokenizer.END_IDX
+        
+        # Dictionary to track rotation index for each sample
+        self.sample_rotations = {}
+        
+        # Dictionary to cache shuffled indices for each sample
+        self.sample_shuffled_indices = {}
+        
+        # Load data
+        print("Loading data files...")
+        for file_path in tqdm.tqdm(list(pathlib.Path(path).glob("*.pt"))):
+            file_data = torch.load(file_path, map_location="cpu")
+            self.data.append((file_data["selfies"], file_data["assay_vals"]))
+            cumulative_length += file_data["selfies"].size(0)
+            self.cumulative_lengths.append(cumulative_length)
+
+    def __len__(self):
+        return self.cumulative_lengths[-1] if self.cumulative_lengths else 0
+    
+    def _get_global_idx(self, file_idx, local_idx):
+        """Convert file_idx and local_idx to a global sample index."""
+        return self.cumulative_lengths[file_idx] + local_idx
+    
+    def _get_shuffled_indices(self, global_idx, raw_assay_vals):
+        """Get or create shuffled property indices for a sample."""
+        if global_idx not in self.sample_shuffled_indices:
+            # First time seeing this sample - extract properties
+            mask = raw_assay_vals != self.pad_idx
+            assay_vals = raw_assay_vals[mask][1:-1]  # Remove SOS/EOS
+            
+            if assay_vals.numel() > 0:
+                # Reshape into property-value pairs
+                pairs = assay_vals.view(-1, 2)
+                
+                # Create a simple hash of the sample content
+                sample_hash = int(raw_assay_vals.sum().item()) & 0xFFFFFFFF
+                
+                # Create shuffled indices
+                self.sample_shuffled_indices[global_idx] = create_shuffled_indices(pairs, sample_hash)
+            else:
+                # Empty sample
+                self.sample_shuffled_indices[global_idx] = []
+        
+        return self.sample_shuffled_indices[global_idx]
+    
+    def _initialize_rotation(self, global_idx):
+        """Initialize rotation index for a sample if needed."""
+        if global_idx not in self.sample_rotations:
+            # First time seeing this sample
+            self.sample_rotations[global_idx] = 0
+
+    def __getitem__(self, idx):
+        file_idx = bisect.bisect_right(self.cumulative_lengths, idx) - 1
+        local_idx = idx - self.cumulative_lengths[file_idx]
+        global_idx = self._get_global_idx(file_idx, local_idx)
+
+        selfies_raw = self.data[file_idx][0][local_idx]
+        raw_assay_vals = self.data[file_idx][1][local_idx]
+        
+        # Get shuffled indices for this sample
+        shuffled_indices = self._get_shuffled_indices(global_idx, raw_assay_vals)
+        
+        # Initialize rotation index if needed
+        self._initialize_rotation(global_idx)
+        
+        # Get current rotation index
+        current_rotation = self.sample_rotations[global_idx]
+        
+        # If no properties, return dummy values
+        if not shuffled_indices:
+            device = raw_assay_vals.device
+            dummy_tch = torch.tensor([1, self.sep_idx] + [self.pad_idx] * (2 * self.nprops), device=device)
+            dummy_out = torch.tensor([self.sep_idx, self.end_idx] + [self.pad_idx] * (2 * self.nprops), device=device)
+            return selfies_raw, dummy_tch, dummy_out
+        
+        # Use rotating property sampling
+        tch, out = process_assay_vals_rotating(
+            raw_assay_vals,
+            self.pad_idx,
+            self.sep_idx,
+            self.end_idx,
+            self.nprops,
+            shuffled_indices,
+            current_rotation
+        )
+        
+        # Increment the rotation index for next time
+        self.sample_rotations[global_idx] += 1
+        
+        # Reshuffle if we've completed a full cycle
+        total_pairs = len(shuffled_indices)
+        if self.sample_rotations[global_idx] % total_pairs == 0:
+            # Create a simple hash of the sample content + cycle count
+            sample_hash = int(raw_assay_vals.sum().item()) & 0xFFFFFFFF
+            cycle = self.sample_rotations[global_idx] // total_pairs
+            new_hash = sample_hash + cycle * 10000
+            
+            # Create new shuffled indices
+            pairs = raw_assay_vals[raw_assay_vals != self.pad_idx][1:-1].view(-1, 2)
+            self.sample_shuffled_indices[global_idx] = create_shuffled_indices(pairs, new_hash)
+        
+        return selfies_raw, tch, out
+    
+    def reset_rotations(self):
+        """Reset all rotation indices (call at the start of each epoch if desired)."""
+        self.sample_rotations = {key: 0 for key in self.sample_rotations}
+        # Optionally reset the shuffled indices as well
+        self.sample_shuffled_indices = {}

@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 # torchrun --standalone --nproc-per-node=8 --master-port=29500 code/3_1_train_multitask_transformer_parallel.py 2> cache/train_multitask_transformer_parallel/logs/err.log
+# purpose: take the model from 3_1_train_multitask_transformer_parallel.py and train it for longer
 
 import os
 import sys
@@ -9,15 +10,23 @@ import pathlib
 import logging
 import datetime
 
+import numpy as np
 import torch
+import torch.nn as nn
+import torch.optim as optim
+import torch.nn.functional as F
 import torch.utils.data
 import torch.multiprocessing as mp
 import torch.distributed as dist
+from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.optim.lr_scheduler import ReduceLROnPlateau
+from torch.amp import autocast, GradScaler
 
 import cvae.tokenizer
 import cvae.utils
 import cvae.models.multitask_transformer as mt
 import cvae.models.mixture_experts as me
+from lion_pytorch import Lion
 from helper.trainer import Trainer
 
 # Environment variables setup
@@ -26,9 +35,9 @@ os.environ['MKL_SERVICE_FORCE_INTEL'] = '0'
 os.environ['OMP_NUM_THREADS'] = '1'
 os.environ['MKL_NUM_THREADS'] = '1'
 os.environ['PYTHONWARNINGS'] = 'ignore::FutureWarning'
-# os.environ['NCCL_DEBUG'] = 'INFO'
+os.environ['NCCL_DEBUG'] = 'INFO'
 os.environ['TORCH_NCCL_ASYNC_ERROR_HANDLING'] = '1'
-# os.environ['TORCH_NCCL_BLOCKING_WAIT'] = '1'
+os.environ['TORCH_NCCL_BLOCKING_WAIT'] = '1'
 os.environ['NCCL_IB_DISABLE'] = '0'
 os.environ['NCCL_P2P_DISABLE'] = '0'
 
@@ -49,7 +58,7 @@ def init_logging(rank):
     if rank == 0:
         logdir = pathlib.Path("cache/train_multitask_transformer_parallel/logs")
         logdir.mkdir(exist_ok=True, parents=True)
-        logging.basicConfig(filename=logdir / "train_multitask_transformer_parallel.log", level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', filemode='a')
+        cvae.utils.setup_logging(logdir / "log.txt", logging)
         logging.info("Logging initialized.")
 
 def main(rank, world_size):
@@ -77,10 +86,8 @@ def main(rank, world_size):
 
     # 2025-04-28 20:12:00 - INFO - Epoch: 0, Step: 6000, Train Loss (last cycle): 0.4948, Eval Loss: 0.4219, BAC: 0.7163, AUC: 0.8700, LR: 0.000100
     # model = me.MoE(tokenizer, num_experts=24, k=4, hdim=512, dim_feedforward=2048, nhead=4, balance_loss_weight=0.1, diversity_loss_weight=1e-4, expert_layers=6)
-
-    model = me.MoE(tokenizer, num_experts=24, k=4, hdim=512, dim_feedforward=2048, nhead=4, balance_loss_weight=0.1, diversity_loss_weight=1e-4, expert_layers=6)
-    batch_size = 64
-    # model = me.MoE.load("brick/moe")
+    batch_size = 50
+    model = me.MoE.load("brick/moe")
 
     num_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     
@@ -88,11 +95,8 @@ def main(rank, world_size):
     train_workers = max(2, min(4, cpus_per_rank))
     val_workers = max(1, min(2, cpus_per_rank))
 
-    # trnds = mt.SequenceShiftDataset("cache/build_tensordataset/multitask_tensors/trn", tokenizer, nprops=5)
-    # valds = mt.SequenceShiftDataset("cache/build_tensordataset/multitask_tensors/tst", tokenizer, nprops=5)
-
-    trnds = mt.RotatingModuloSequenceShiftDataset("cache/build_tensordataset/multitask_tensors/trn", tokenizer, nprops=5)
-    valds = mt.RotatingModuloSequenceShiftDataset("cache/build_tensordataset/multitask_tensors/tst", tokenizer, nprops=5)
+    trnds = mt.FastPackedSequenceShiftDataset("cache/pack_multitask_tensors/packed_trn")
+    valds = mt.FastPackedSequenceShiftDataset("cache/pack_multitask_tensors/packed_tst")
 
     trndl = torch.utils.data.DataLoader(
         trnds, batch_size=batch_size, shuffle=False, num_workers=train_workers,
@@ -106,14 +110,13 @@ def main(rank, world_size):
         sampler=torch.utils.data.distributed.DistributedSampler(valds, num_replicas=world_size, rank=rank, drop_last=True)
     )
 
-    trainer = Trainer(model, rank, tokenizer, trndl, batch_size=batch_size, scheduler_warmup_steps=10000, scheduler_max_steps=300000, max_steps=1e7)
+    trainer = Trainer(model, rank, tokenizer, trndl, batch_size=batch_size, max_epochs=10000)
     trainer.set_validation_dataloader(valdl)
     trainer.set_mask_percent(0.1)
     trainer.set_model_savepath(modeldir / "moe")
     trainer.set_metrics_file(metricsdir / "multitask_loss.tsv", overwrite=True)
 
     if rank == 0:
-        logging.info(f"trnds samples: {len(trnds)}, valds samples: {len(valds)}")
         trainer.log(f"{len(trndl)} train batches")
         trainer.log(f"{len(valdl)} validation batches")
         trainer.log(f"{num_params/1e6:.2f} million parameters")
@@ -122,13 +125,10 @@ def main(rank, world_size):
     trainer.start()
     cleanup()
 
-    if rank == 0:
-        logging.info("Copying final model from modeldir to brick/moe...")
-        # save modeldir/moe to brick/moe
-        # delete brick/moe directory
-        if os.path.exists("brick/moe"):
-            shutil.rmtree("brick/moe", ignore_errors=True)
-        shutil.copytree(modeldir / "moe", "brick/moe")
+    # save modeldir/moe to brick/moe
+    # delete brick/moe directory
+    shutil.rmtree("brick/moe", ignore_errors=True)
+    shutil.copytree(modeldir / "moe", "brick/moe")
 
 if __name__ == "__main__":
     rank = int(os.environ["RANK"])

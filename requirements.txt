@@ -2,7 +2,6 @@
 torch
 torchvision
 torchaudio
-pytorch-cuda
 
 # Data Science & ML Libraries
 numpy
@@ -11,7 +10,6 @@ scikit-learn
 scipy
 matplotlib
 seaborn
-faiss-gpu
 tqdm
 dvc
 

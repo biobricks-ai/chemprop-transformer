@@ -44,9 +44,15 @@ def calculate_metrics(y_true, y_pred):
 
 calculate_metrics_udf = F.udf(calculate_metrics, "struct<AUC:double, ACC:double, BAC:double, cross_entropy_loss:double>")
 
-mean_pred = outdf.groupBy('nprops', 'assay', 'chemical_id','value').agg(F.mean('probs').alias('probs')).cache()
+from pyspark.sql.window import Window
 
-large_properties_df = mean_pred.groupBy('nprops', 'assay').agg(
+confpred = outdf.withColumn("dist", F.abs(F.col("probs") - 0.5))\
+    .withColumn("r", F.row_number().over(Window.partitionBy("nprops", "assay", "chemical_id", "value").orderBy(F.desc("dist"))))\
+    .filter("r = 1")\
+    .drop("r", "dist")\
+    .cache()
+
+large_properties_df = confpred.groupBy('nprops', 'assay').agg(
     F.collect_list('value').alias('y_true'),
     F.collect_list('probs').alias('y_pred'),
     countDistinct('chemical_id').alias('nchem'),

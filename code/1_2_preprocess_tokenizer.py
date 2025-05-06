@@ -3,10 +3,18 @@ import cvae.tokenizer.selfies_tokenizer, cvae.utils, cvae.spark_helpers as H
 import pathlib
 import logging
 
+# cmd: spark-submit \
+#   --master local[240] \
+#   --driver-memory 512g \
+#   --conf spark.eventLog.enabled=true \
+#   --conf spark.eventLog.dir=file:///tmp/spark-events \
+#   code/1_2_preprocess_tokenizer.py
+
+
 # Set up logging
-logdir = pathlib.Path('log')
+logdir = pathlib.Path('cache/preprocess_tokenizer/log')
 logdir.mkdir(parents=True, exist_ok=True)
-cvae.utils.setup_logging(logdir / 'preprocess_tokenizer.log', logging)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', filename=logdir / 'preprocess_tokenizer.log', filemode='w')
 
 outdir : pathlib.Path = pathlib.Path('cache/preprocess_tokenizer')
 outdir.mkdir(parents=True, exist_ok=True)

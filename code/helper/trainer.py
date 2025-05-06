@@ -19,7 +19,7 @@ from cvae.models.multitask_transformer import linear_warmup_and_decay_scheduler
 
 class Trainer():
 
-    def __init__(self, model, rank, tokenizer, trn_iterator, batch_size, max_steps=100000):
+    def __init__(self, model, rank, tokenizer, trn_iterator, batch_size, scheduler_warmup_steps=10000, scheduler_max_steps=100000, max_steps=100000):
         self.rank = rank
         self.global_step = 0
         self.trn_iterator = trn_iterator
@@ -34,49 +34,30 @@ class Trainer():
         # Build loss functions *before* DDP and compile
         # Assuming build_stratified_lossfn exists and works on the base model
         self.log(f"Rank {rank}: Attempting to build loss functions.")
-        try:
-            # Corrected: build_stratified_lossfn does not take device arg based on provided code
-            # self.lossfn = self.model.build_lossfn()
-            # self.eval_loss = self.model.build_lossfn()
+        
 
-            self.lossfn = self.model.build_stratified_lossfn()
-            self.eval_loss = self.model.build_stratified_lossfn()
-            self.log(f"Rank {rank}: Stratified loss functions built successfully.")
-        except AttributeError:
-            self.log(f"Rank {rank}: Error: build_stratified_lossfn method not found on model. Loss functions are None.")
-            self.lossfn = None
-            self.eval_loss = None
-        except Exception as e:
-             self.log(f"Rank {rank}: Error building loss functions: {e}")
-             self.log(f"Rank {rank}: Traceback:\n{traceback.format_exc()}")
-             self.lossfn = None
-             self.eval_loss = None
+        self.lossfn = self.model.build_stratified_lossfn()
+        self.eval_loss = self.model.build_stratified_lossfn()
+        self.log(f"Rank {rank}: Stratified loss functions built successfully.")
         self.log(f"Rank {rank}: Finished attempt to build loss functions.")
 
         # Ensure all ranks are here before initializing DDP
         self.log(f"Rank {rank}: Entering barrier before DDP initialization.")
         dist.barrier()
         self.log(f"Rank {rank}: Barrier passed, proceeding with DDP initialization.")
-
         self.log(f"Rank {rank}: Wrapping model with DDP.")
-        # This is the line where the hang is reported
         self.model = DDP(self.model, device_ids=[rank])
         self.log(f"Rank {rank}: Model DDP wrapped.")
 
         self.log(f"Rank {rank}: Compiling model.")
-        try:
-            self.model = torch.compile(self.model)
-            self.log(f"Rank {rank}: Model compiled successfully.")
-        except Exception as e:
-            self.log(f"Rank {rank}: Warning: Model compilation failed: {e}. Proceeding without compilation.")
-            self.log(f"Rank {rank}: Traceback:\n{traceback.format_exc()}")
-            pass # If compile fails, use the DDP model directly
+        self.model = torch.compile(self.model)
+        self.log(f"Rank {rank}: Model compiled successfully.")
 
         self.max_steps = max_steps
 
         # Add gradient accumulation for effectively larger batch sizes
         # self.gradient_accumulation_steps = 10
-        self.gradient_accumulation_steps = 2048 // batch_size
+        self.gradient_accumulation_steps = max(1, 2048 // (batch_size * dist.get_world_size()))
         
         # Calculate effective batch size per GPU
         effective_batch_size_per_gpu = batch_size * self.gradient_accumulation_steps
@@ -85,10 +66,8 @@ class Trainer():
 
         # Scale learning rate based on total effective batch size (common practice)
         # Using 128 as a reference batch size for LR scaling
-        base_lr = 1e-5 * total_effective_batch_size / 128
         self.log(f"Rank {rank}: Effective batch size per GPU: {effective_batch_size_per_gpu}")
         self.log(f"Rank {rank}: Total effective batch size: {total_effective_batch_size}")
-        self.log(f"Rank {rank}: Base learning rate scaled to: {base_lr}")
 
         self.log(f"Rank {rank}: Initializing optimizer.")
         self.optimizer = torch.optim.AdamW(
@@ -100,10 +79,11 @@ class Trainer():
         self.log(f"Rank {rank}: Optimizer initialized.")
 
         self.log(f"Rank {rank}: Initializing scheduler.")
-        # self.scheduler = ReduceLROnPlateau(self.optimizer, mode='min', factor=0.5, patience=3, min_lr=1e-6)
-        self.scheduler = linear_warmup_and_decay_scheduler(self.optimizer, max_lr=3e-4, min_lr=1e-8, warmup_steps=10000, total_steps=100000)
+        max_lr = 3e-4
+        min_lr = 5e-7
+        self.scheduler = linear_warmup_and_decay_scheduler(self.optimizer, max_lr=max_lr, min_lr=min_lr, warmup_steps=scheduler_warmup_steps, total_steps=scheduler_max_steps)
         self.scheduler.step()
-        self.log(f"Rank {rank}: Scheduler initialized. lr is {self.optimizer.param_groups[0]['lr']}")
+        self.log(f"Rank {rank}: Scheduler initialized. max_lr is {max_lr}, min_lr is {min_lr}, lr is {self.optimizer.param_groups[0]['lr']}, warmup_steps={scheduler_warmup_steps}, total_steps={scheduler_max_steps}, gradient_accumulation_steps={self.gradient_accumulation_steps}, effective_batch_size={effective_batch_size_per_gpu * world_size}")
 
         self.metrics_path = None
         self.best_loss = np.inf
@@ -116,7 +96,7 @@ class Trainer():
         # Reduce evaluation frequency but evaluate quickly to trigger model saving
         self.first_eval = 100
         self.eval_every = 1000
-        self.eval_samples = 200 # Number of batches to use for evaluation
+        self.eval_samples = 400 # Number of batches to use for evaluation
 
         # Ensure loss functions were built
         if self.lossfn is None or self.eval_loss is None:
@@ -261,10 +241,10 @@ class Trainer():
             all_preds = torch.cat(all_preds, dim=0)
             all_targets = torch.cat(all_targets, dim=0)
 
-            max_tokens = 5000
-            if all_preds.size(0) > max_tokens:
-                all_preds = all_preds[:max_tokens]
-                all_targets = all_targets[:max_tokens]
+            # max_tokens = 5000
+            # if all_preds.size(0) > max_tokens:
+            #     all_preds = all_preds[:max_tokens]
+            #     all_targets = all_targets[:max_tokens]
 
             gathered_preds = [torch.zeros_like(all_preds) for _ in range(dist.get_world_size())]
             gathered_targets = [torch.zeros_like(all_targets) for _ in range(dist.get_world_size())]
