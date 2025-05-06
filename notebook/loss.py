@@ -10,6 +10,7 @@ sns.set(style="darkgrid")
 
 args = sys.argv[1:]
 batch_skip = int(args[0]) if len(args) > 0 else 0
+sched_interval = int(args[1]) if len(args) > 1 else 20
 
 # metrics_file = 'cache/train_multitask_transformer/metrics/multitask_loss.tsv'
 metrics_file = 'cache/train_multitask_transformer_parallel/metrics/multitask_loss.tsv'
@@ -25,7 +26,6 @@ def draw_plot(last_scheduler_length=0):
     data = data[data['batch'] > batch_skip]
 
     # create and append a new dataframe that batches the 'train' type and finds the average loss
-    sched_interval = 20
     max_batch = data[data['type'] == 'train']['batch'].max()
     sched_data = data[data['type'] == 'train'].assign(
         batch=lambda x: max_batch - ((max_batch - x['batch']) // sched_interval) * sched_interval
@@ -50,6 +50,10 @@ def draw_plot(last_scheduler_length=0):
     # last_lr = data['lr'].iloc[-1]
 
     # print(colored(f"Epoch: {epoch} Last learning rate: {last_lr}", 'white'))
+    # Print the current minimum eval loss if available
+    if len(data[data['type'] == 'eval']) > 0:
+        min_eval_loss = data[data['type'] == 'eval']['loss'].min()
+        print(colored(f"Minimum eval loss: {min_eval_loss:.6f}", 'cyan'))
     print_losses('train')
     print_losses('sched')
     if len(data[data['type'] == 'eval']) > 0:

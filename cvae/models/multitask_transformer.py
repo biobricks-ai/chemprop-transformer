@@ -429,12 +429,14 @@ def linear_warmup_and_decay_scheduler(optimizer, warmup_steps, total_steps, max_
 
 from typing import Tuple, Dict, List, Optional
 
-def create_shuffled_indices(pairs: torch.Tensor, sample_hash: int) -> List[int]:
-    """Create deterministically shuffled indices based on a hash."""
+# Helper functions that don't need TorchScript
+def create_shuffled_indices(pairs: torch.Tensor, sample_hash: int, rank: int = 0) -> List[int]:
+    """Create deterministically shuffled indices based on a hash and rank."""
     total_pairs = pairs.size(0)
     
-    # Create a deterministic random generator with seed
-    random_gen = random.Random(sample_hash)
+    # Create a deterministic random generator with seed + rank
+    # Adding the rank ensures different devices get the same sequence
+    random_gen = random.Random(sample_hash + rank * 1000000)
     
     # Generate a deterministic shuffle pattern
     shuffled_indices = list(range(total_pairs))
@@ -453,6 +455,7 @@ def rotate_indices(indices: List[int], rotation_idx: int) -> List[int]:
     
     # Create a rotated list of indices
     return indices[rotation_idx:] + indices[:rotation_idx]
+
 
 @torch.jit.script
 def process_assay_vals_rotating(
@@ -538,15 +541,17 @@ def process_assay_vals_rotating(
 
 
 class RotatingModuloSequenceShiftDataset(Dataset):
-    def __init__(self, path, tokenizer, nprops=5, assay_filter=None):
+    def __init__(self, path, tokenizer, nprops=5, assay_filter=None, rank=0, world_size=1):
         """
-        Dataset with rotating property sampling to ensure each property gets to be first.
+        Dataset with rotating property sampling that's deterministic across different ranks.
         
         Args:
             path: Path to data files
             tokenizer: Tokenizer for processing sequences
             nprops: Number of property-value pairs to include
             assay_filter: Optional list of property IDs to filter
+            rank: Process rank for distributed training (default: 0)
+            world_size: Total number of processes (default: 1)
         """
         self.nprops = nprops
         self.assay_filter = [] if assay_filter is None else assay_filter
@@ -558,6 +563,10 @@ class RotatingModuloSequenceShiftDataset(Dataset):
         self.sep_idx = tokenizer.SEP_IDX
         self.end_idx = tokenizer.END_IDX
         
+        # Store rank information
+        self.rank = rank
+        self.world_size = world_size
+        
         # Dictionary to track rotation index for each sample
         self.sample_rotations = {}
         
@@ -565,7 +574,7 @@ class RotatingModuloSequenceShiftDataset(Dataset):
         self.sample_shuffled_indices = {}
         
         # Load data
-        print("Loading data files...")
+        print(f"Rank {rank}: Loading data files...")
         for file_path in tqdm.tqdm(list(pathlib.Path(path).glob("*.pt"))):
             file_data = torch.load(file_path, map_location="cpu")
             self.data.append((file_data["selfies"], file_data["assay_vals"]))
@@ -593,8 +602,10 @@ class RotatingModuloSequenceShiftDataset(Dataset):
                 # Create a simple hash of the sample content
                 sample_hash = int(raw_assay_vals.sum().item()) & 0xFFFFFFFF
                 
-                # Create shuffled indices
-                self.sample_shuffled_indices[global_idx] = create_shuffled_indices(pairs, sample_hash)
+                # Create shuffled indices with rank awareness
+                self.sample_shuffled_indices[global_idx] = create_shuffled_indices(
+                    pairs, sample_hash, self.rank
+                )
             else:
                 # Empty sample
                 self.sample_shuffled_indices[global_idx] = []
@@ -653,9 +664,11 @@ class RotatingModuloSequenceShiftDataset(Dataset):
             cycle = self.sample_rotations[global_idx] // total_pairs
             new_hash = sample_hash + cycle * 10000
             
-            # Create new shuffled indices
+            # Create new shuffled indices with rank awareness
             pairs = raw_assay_vals[raw_assay_vals != self.pad_idx][1:-1].view(-1, 2)
-            self.sample_shuffled_indices[global_idx] = create_shuffled_indices(pairs, new_hash)
+            self.sample_shuffled_indices[global_idx] = create_shuffled_indices(
+                pairs, new_hash, self.rank
+            )
         
         return selfies_raw, tch, out
     
@@ -664,3 +677,29 @@ class RotatingModuloSequenceShiftDataset(Dataset):
         self.sample_rotations = {key: 0 for key in self.sample_rotations}
         # Optionally reset the shuffled indices as well
         self.sample_shuffled_indices = {}
+    
+    @staticmethod
+    def setup_distributed(path, tokenizer, nprops=5, assay_filter=None, 
+                          local_rank=0, world_size=1):
+        """
+        Factory method to create a dataset for distributed training with proper rank.
+        
+        Args:
+            path: Path to data files
+            tokenizer: Tokenizer for processing sequences
+            nprops: Number of property-value pairs to include
+            assay_filter: Optional list of property IDs to filter
+            local_rank: Local process rank
+            world_size: Total number of processes
+            
+        Returns:
+            RotatingModuloSequenceShiftDataset instance configured for distributed training
+        """
+        return RotatingModuloSequenceShiftDataset(
+            path=path,
+            tokenizer=tokenizer,
+            nprops=nprops,
+            assay_filter=assay_filter,
+            rank=local_rank,
+            world_size=world_size
+        )

@@ -241,10 +241,11 @@ class Trainer():
             all_preds = torch.cat(all_preds, dim=0)
             all_targets = torch.cat(all_targets, dim=0)
 
-            # max_tokens = 5000
-            # if all_preds.size(0) > max_tokens:
-            #     all_preds = all_preds[:max_tokens]
-            #     all_targets = all_targets[:max_tokens]
+            max_tokens = 10000
+            if all_preds.size(0) > max_tokens:
+                self.log(f"Truncating predictions from {all_preds.size(0)} to {max_tokens}")
+                all_preds = all_preds[:max_tokens]
+                all_targets = all_targets[:max_tokens]
 
             gathered_preds = [torch.zeros_like(all_preds) for _ in range(dist.get_world_size())]
             gathered_targets = [torch.zeros_like(all_targets) for _ in range(dist.get_world_size())]

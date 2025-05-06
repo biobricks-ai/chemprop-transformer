@@ -9,6 +9,7 @@ if __name__ == "__main__":
     # Create the dataset
     
     tokenizer = cvae.tokenizer.SelfiesPropertyValTokenizer.load('brick/selfies_property_val_tokenizer')
+    tmpdir = "cache/tests/rotatingmodulodataset/multitask_tensors"
     trn = RotatingModuloSequenceShiftDataset(
         path="cache/build_tensordataset/multitask_tensors/trn",
         tokenizer=tokenizer,

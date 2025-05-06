@@ -76,6 +76,7 @@ def main(rank, world_size):
     # batch_size = 25
 
     # 2025-04-28 20:12:00 - INFO - Epoch: 0, Step: 6000, Train Loss (last cycle): 0.4948, Eval Loss: 0.4219, BAC: 0.7163, AUC: 0.8700, LR: 0.000100
+    # 2025-05-06 13:02:38 - INFO - Epoch: 8, Step: 37000, Train Loss (last cycle): 0.9009, Eval Loss: 0.8615, BAC: 0.7482, AUC: 0.9135, LR: 0.000210
     # model = me.MoE(tokenizer, num_experts=24, k=4, hdim=512, dim_feedforward=2048, nhead=4, balance_loss_weight=0.1, diversity_loss_weight=1e-4, expert_layers=6)
 
     model = me.MoE(tokenizer, num_experts=24, k=4, hdim=512, dim_feedforward=2048, nhead=4, balance_loss_weight=0.1, diversity_loss_weight=1e-4, expert_layers=6)
@@ -91,8 +92,22 @@ def main(rank, world_size):
     # trnds = mt.SequenceShiftDataset("cache/build_tensordataset/multitask_tensors/trn", tokenizer, nprops=5)
     # valds = mt.SequenceShiftDataset("cache/build_tensordataset/multitask_tensors/tst", tokenizer, nprops=5)
 
-    trnds = mt.RotatingModuloSequenceShiftDataset("cache/build_tensordataset/multitask_tensors/trn", tokenizer, nprops=5)
-    valds = mt.RotatingModuloSequenceShiftDataset("cache/build_tensordataset/multitask_tensors/tst", tokenizer, nprops=5)
+   # Create rank-aware datasets using setup_distributed
+    trnds = mt.RotatingModuloSequenceShiftDataset.setup_distributed(
+        path="cache/build_tensordataset/multitask_tensors/trn", 
+        tokenizer=tokenizer, 
+        nprops=5,
+        local_rank=rank,
+        world_size=world_size
+    )
+    
+    valds = mt.RotatingModuloSequenceShiftDataset.setup_distributed(
+        path="cache/build_tensordataset/multitask_tensors/tst", 
+        tokenizer=tokenizer, 
+        nprops=5,
+        local_rank=rank,
+        world_size=world_size
+    )
 
     trndl = torch.utils.data.DataLoader(
         trnds, batch_size=batch_size, shuffle=False, num_workers=train_workers,
@@ -106,7 +121,10 @@ def main(rank, world_size):
         sampler=torch.utils.data.distributed.DistributedSampler(valds, num_replicas=world_size, rank=rank, drop_last=True)
     )
 
-    trainer = Trainer(model, rank, tokenizer, trndl, batch_size=batch_size, scheduler_warmup_steps=10000, scheduler_max_steps=300000, max_steps=1e7)
+    trainer = Trainer(model, rank, tokenizer, trndl, batch_size=batch_size, 
+        scheduler_warmup_steps=1e4, scheduler_max_steps=3e5, 
+        max_steps=1e7)
+    
     trainer.set_validation_dataloader(valdl)
     trainer.set_mask_percent(0.1)
     trainer.set_model_savepath(modeldir / "moe")
