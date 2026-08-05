@@ -1,0 +1,54 @@
+{
+  "@context": "../../context/source.context.jsonld",
+  "@type": "dcat:Dataset",
+  "@id": "https://biobricks.ai/bricks/toxtransformer",
+  "dcterms:title": "ToxTransformer - Conditional Variational Autoencoder over ChemHarmony",
+  "dcterms:description": "ToxTransformer is a multitask transformer / conditional variational autoencoder that models molecular biological activity. Its brick outputs (trained model weights under brick/moe, a selfies-property-value tokenizer, and brick/cvae.sqlite) are produced by training on the ChemHarmony harmonized chemical-activity store (biobricks-ai/chemharmony, pinned in .bb/dependencies.txt). ChemHarmony integrates >13 upstream toxicology/bioactivity databases with divergent licenses, so the training data - and any activity records embedded in the outputs - inherit ChemHarmony's most-restrictive terms. The repository's own code is MIT-licensed, but that covers the software, not the underlying data.",
+  "dcterms:license": [
+    "https://opensource.org/license/mit",
+    "commercial license required",
+    "https://creativecommons.org/licenses/by-sa/3.0/"
+  ],
+  "biobricks:licenseName": "MIT (code) over ChemHarmony-derived data (most restrictive: CTD non-commercial + ChEMBL CC BY-SA 3.0)",
+  "biobricks:licenseClass": "restricted",
+  "biobricks:merckCommercialUse": "prohibited",
+  "biobricks:licenseEvidence": [
+    {
+      "source": ".bb/dependencies.txt",
+      "quote": "https://github.com/biobricks-ai/chemharmony#dd82369101d35d7e84601edc2f78d1f2b761e5d9",
+      "confidence": "high"
+    },
+    {
+      "source": "README.md",
+      "quote": "The model is trained on the [ChEMBL](https://www.ebi.ac.uk/chembl/) dataset using [BioBricks](https://biobricks.ai).",
+      "confidence": "high"
+    },
+    {
+      "source": "LICENSE",
+      "quote": "MIT License  Copyright (c) 2024 biobricks-ai",
+      "confidence": "high"
+    },
+    {
+      "source": "proposed/brick/chemharmony.source.jsonld (upstream data source annotation)",
+      "quote": "biobricks:licenseClass: restricted; biobricks:merckCommercialUse: prohibited; CTDBase quote: 'Any reproduction or use for commercial purpose is prohibited without the prior express written permission of the MDI Biological Laboratory and NC State University.'",
+      "confidence": "high"
+    }
+  ],
+  "biobricks:reviewed": false,
+  "biobricks:reviewNotes": "Determined by BioBricks licensing-provenance annotation agent (Claude). toxtransformer has no .bb/source.jsonld; its only data input is ChemHarmony, pinned in .bb/dependencies.txt (dvc.yaml stages preprocess -> train -> build_sqlite all consume cache/preprocess/activities.parquet derived from ChemHarmony). The repo's LICENSE/README declare MIT, but MIT governs only the code and model software, not the redistribution rights of the training data or the activity records baked into brick/cvae.sqlite. ChemHarmony (already annotated at proposed/brick/chemharmony.source.jsonld) integrates >13 databases and is classed restricted / commercial-prohibited because CTDBase forbids commercial use without written permission and ChEMBL is CC BY-SA 3.0 (share-alike). Under the most-restrictive-component rule, a dataset derived from ChemHarmony inherits restricted / prohibited. HUMAN REVIEW: (1) confirm whether trained model weights (brick/moe) are considered a redistributable derivative of the restricted training data or fall outside its scope; (2) brick/cvae.sqlite embeds ChemHarmony activity rows and clearly carries the upstream restrictions; (3) if a commercial deployment is intended, ChemHarmony's CTD (non-commercial) and ChEMBL (share-alike) components must be cleared separately.",
+  "prov:wasDerivedFrom": [
+    {
+      "@type": "dcat:Dataset",
+      "@id": "https://github.com/biobricks-ai/chemharmony",
+      "dcterms:title": "ChemHarmony - integrated chemical activity store (ChEMBL, CTDBase, ToxValDB, Tox21, ToxCast, BindingDB, PubChem, and others)",
+      "dcterms:license": "http://ctdbase.org/about/legal.jsp",
+      "dcterms:publisher": "BioBricks.ai"
+    },
+    {
+      "@type": "dcat:Dataset",
+      "@id": "https://www.ebi.ac.uk/chembl/",
+      "dcterms:title": "ChEMBL",
+      "dcterms:license": "https://creativecommons.org/licenses/by-sa/3.0/"
+    }
+  ]
+}
